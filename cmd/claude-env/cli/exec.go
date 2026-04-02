@@ -10,22 +10,18 @@ import (
 )
 
 var execCmd = &cobra.Command{
-	Use:   "exec -- <command> [args...]",
-	Short: "Run a command with CLAUDE_CONFIG_DIR set",
-	Long: `Resolves the active environment, sets CLAUDE_CONFIG_DIR, and exec's
-the given command. Useful as: claude-env exec -- claude <args>`,
+	Use:                "exec <command> [args...]",
+	Short:              "Run a command with CLAUDE_CONFIG_DIR set to the active environment",
+	Long:               `Resolves the active environment, sets CLAUDE_CONFIG_DIR, and replaces the current process with the given command. Like pyenv exec, this is useful for running claude or any other tool under the active environment.`,
 	DisableFlagParsing: true,
+	SilenceUsage:       true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 {
-			return fmt.Errorf("usage: claude-env exec -- <command> [args...]")
-		}
-
-		// Strip leading "--" if present.
-		if args[0] == "--" {
+		// Strip leading "--" if present for backwards compat.
+		if len(args) > 0 && args[0] == "--" {
 			args = args[1:]
 		}
 		if len(args) == 0 {
-			return fmt.Errorf("usage: claude-env exec -- <command> [args...]")
+			return fmt.Errorf("usage: claude-env exec <command> [args...]")
 		}
 
 		mgr, _, err := loadManager()
@@ -44,8 +40,8 @@ the given command. Useful as: claude-env exec -- claude <args>`,
 			return fmt.Errorf("command not found: %s", args[0])
 		}
 
-		env := append(os.Environ(), "CLAUDE_CONFIG_DIR="+envDir)
-		return syscall.Exec(binary, args, env)
+		environ := append(os.Environ(), "CLAUDE_CONFIG_DIR="+envDir)
+		return syscall.Exec(binary, args, environ)
 	},
 }
 
