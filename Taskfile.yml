@@ -3,7 +3,7 @@ version: "3"
 vars:
   APP_NAME: claude-env
   CMD_PATH: ./cmd/claude-env
-  BIN_DIR: bin
+  BIN_DIR: dist
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
   COMMIT:
