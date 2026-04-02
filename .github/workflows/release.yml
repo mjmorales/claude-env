@@ -1,0 +1,206 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    name: Determine Version
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.bump.outputs.skip }}
+      new_version: ${{ steps.bump.outputs.new_version }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version bump
+        id: bump
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+
+          if [ -z "$LATEST_TAG" ]; then
+            CURRENT="0.0.0"
+            LATEST_TAG="v0.0.0"
+            echo "No tags found. Starting from 0.0.0."
+          else
+            CURRENT="${LATEST_TAG#v}"
+          fi
+
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          if [ "$LATEST_TAG" = "v0.0.0" ]; then
+            COMMITS=$(git log --pretty=format:"%s%n%b" HEAD)
+          else
+            COMMITS=$(git log --pretty=format:"%s%n%b" "${LATEST_TAG}..HEAD")
+          fi
+
+          if [ -z "$COMMITS" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          BUMP="none"
+          if echo "$COMMITS" | grep -qiE "^[a-z]+(\(.+\))?!:|BREAKING CHANGE:"; then
+            BUMP="major"
+          elif echo "$COMMITS" | grep -qE "^feat(\(.+\))?:"; then
+            BUMP="minor"
+          elif echo "$COMMITS" | grep -qE "^(fix|docs|refactor|perf|style|build|chore|test)(\(.+\))?:"; then
+            BUMP="patch"
+          fi
+
+          if [ "$BUMP" = "none" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Bump: $BUMP ($CURRENT -> $NEW_VERSION)"
+
+      - name: Generate changelog
+        id: changelog
+        if: steps.bump.outputs.skip != 'true'
+        run: |
+          LATEST_TAG="${{ steps.bump.outputs.latest_tag }}"
+
+          if [ "$LATEST_TAG" = "v0.0.0" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${LATEST_TAG}..HEAD"
+          fi
+
+          {
+            echo "changelog<<CHANGELOG_EOF"
+
+            BREAKING=$(git log --pretty=format:"%s" "$RANGE" | grep -iE "^[a-z]+(\(.+\))?!:" || true)
+            BREAKING_BODY=$(git log --pretty=format:"%b" "$RANGE" | grep -A1 "BREAKING CHANGE:" | grep -v "^--$" || true)
+            if [ -n "$BREAKING" ] || [ -n "$BREAKING_BODY" ]; then
+              echo "### Breaking Changes"
+              [ -n "$BREAKING" ] && echo "$BREAKING" | sed 's/^/- /'
+              [ -n "$BREAKING_BODY" ] && echo "$BREAKING_BODY" | sed 's/^/- /'
+              echo ""
+            fi
+
+            FEATURES=$(git log --pretty=format:"- %s (%h)" "$RANGE" | grep -E "^- feat" || true)
+            if [ -n "$FEATURES" ]; then
+              echo "### Features"
+              echo "$FEATURES"
+              echo ""
+            fi
+
+            FIXES=$(git log --pretty=format:"- %s (%h)" "$RANGE" | grep -E "^- fix" || true)
+            if [ -n "$FIXES" ]; then
+              echo "### Fixes"
+              echo "$FIXES"
+              echo ""
+            fi
+
+            OTHER=$(git log --pretty=format:"- %s (%h)" "$RANGE" | grep -E "^- (docs|refactor|perf|style|build|chore|test)" || true)
+            if [ -n "$OTHER" ]; then
+              echo "### Other"
+              echo "$OTHER"
+              echo ""
+            fi
+
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    needs: version
+    if: needs.version.outputs.skip != 'true'
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="v${{ needs.version.outputs.new_version }}"
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          LDFLAGS="-s -w \
+            -X github.com/mjmorales/claude-env/cmd/claude-env/cli.version=${VERSION} \
+            -X github.com/mjmorales/claude-env/cmd/claude-env/cli.commit=${COMMIT} \
+            -X github.com/mjmorales/claude-env/cmd/claude-env/cli.date=${DATE}"
+          BINARY=claude-env-${GOOS}-${GOARCH}
+          go build -ldflags "${LDFLAGS}" -o "${BINARY}" ./cmd/claude-env
+          sha256sum "${BINARY}" > "${BINARY}.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-env-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            claude-env-${{ matrix.goos }}-${{ matrix.goarch }}
+            claude-env-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
+
+  publish:
+    name: Tag and Publish
+    runs-on: ubuntu-latest
+    needs: [version, build]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create tag
+        run: |
+          NEW_VERSION="v${{ needs.version.outputs.new_version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${NEW_VERSION}"
+          git push origin "${NEW_VERSION}"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ needs.version.outputs.new_version }}"
+          cd artifacts
+          cat *.sha256 > checksums.sha256
+          gh release create "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --title "${TAG}" \
+            --notes "${{ needs.version.outputs.changelog }}" \
+            claude-env-* checksums.sha256
