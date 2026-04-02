@@ -1,0 +1,31 @@
+version: "3"
+
+tasks:
+  default:
+    desc: Run all tests
+    cmds:
+      - go test ./... -race -count=1
+
+  short:
+    desc: Run tests in short mode
+    cmds:
+      - go test ./... -short -count=1
+
+  cover:
+    desc: Run tests with coverage report
+    cmds:
+      - go test ./... -race -coverprofile=coverage.out -covermode=atomic
+      - go tool cover -func=coverage.out
+
+  cover-html:
+    desc: Open coverage report in browser
+    deps:
+      - cover
+    cmds:
+      - go tool cover -html=coverage.out -o coverage.html
+      - open coverage.html
+
+  bench:
+    desc: Run benchmarks
+    cmds:
+      - go test ./... -bench=. -benchmem -run=^$

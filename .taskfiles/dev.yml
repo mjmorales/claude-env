@@ -1,0 +1,27 @@
+version: "3"
+
+tasks:
+  deps:
+    desc: Install development tools
+    cmds:
+      - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+      - go install golang.org/x/tools/cmd/goimports@latest
+
+  tidy:
+    desc: Tidy and verify module dependencies
+    cmds:
+      - go mod tidy
+      - go mod verify
+
+  run:
+    desc: Build and run the CLI
+    cmds:
+      - go run {{.CMD_PATH}} {{.CLI_ARGS}}
+
+  ci:
+    desc: Run the full CI pipeline locally
+    cmds:
+      - task: tidy
+      - task: lint:default
+      - task: test:default
+      - task: build:default

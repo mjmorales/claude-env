@@ -1,0 +1,29 @@
+version: "3"
+
+tasks:
+  default:
+    desc: Run all linters
+    cmds:
+      - task: check
+      - task: vet
+
+  check:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  fix:
+    desc: Auto-fix lint issues
+    cmds:
+      - golangci-lint run --fix ./...
+
+  fmt:
+    desc: Format all Go files
+    cmds:
+      - gofmt -s -w .
+      - goimports -w -local github.com/mjmorales/claude-env .

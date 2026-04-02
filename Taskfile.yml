@@ -1,0 +1,35 @@
+version: "3"
+
+vars:
+  APP_NAME: claude-env
+  CMD_PATH: ./cmd/claude-env
+  BIN_DIR: bin
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo "none"
+  DATE:
+    sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
+  LDFLAGS: >-
+    -s -w
+    -X github.com/mjmorales/claude-env/cmd/claude-env/cli.version={{.VERSION}}
+    -X github.com/mjmorales/claude-env/cmd/claude-env/cli.commit={{.COMMIT}}
+    -X github.com/mjmorales/claude-env/cmd/claude-env/cli.date={{.DATE}}
+
+includes:
+  build: .taskfiles/build.yml
+  lint: .taskfiles/lint.yml
+  test: .taskfiles/test.yml
+  dev: .taskfiles/dev.yml
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list-all
+
+  setup:
+    desc: Install all development dependencies
+    cmds:
+      - task: dev:deps
+      - task: dev:tidy

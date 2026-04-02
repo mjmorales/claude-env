@@ -1,0 +1,23 @@
+version: "3"
+
+tasks:
+  default:
+    desc: Build the binary
+    cmds:
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BIN_DIR}}/{{.APP_NAME}} {{.CMD_PATH}}
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.BIN_DIR}}/{{.APP_NAME}}"
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf {{.BIN_DIR}} dist
+
+  install:
+    desc: Install binary to GOPATH/bin
+    cmds:
+      - go install -ldflags '{{.LDFLAGS}}' {{.CMD_PATH}}
