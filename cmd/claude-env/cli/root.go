@@ -1,11 +1,21 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
+
+	"github.com/mjmorales/claude-env/internal/config"
+	"github.com/mjmorales/claude-env/internal/env"
+	"github.com/mjmorales/claude-env/internal/fsutil"
+	"github.com/mjmorales/claude-env/internal/symlink"
 )
 
-var cfgFile string
+var (
+	cfgFile string
+	dryRun  bool
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "claude-env",
@@ -18,27 +28,55 @@ func Execute() error {
 }
 
 func init() {
-	cobra.OnInitialize(initConfig)
-
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/.claude-envs/config.toml)")
+	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "preview changes without modifying the filesystem")
 }
 
-func initConfig() {
-	if cfgFile != "" {
-		viper.SetConfigFile(cfgFile)
-	} else {
-		home, err := homeDir()
-		if err != nil {
-			return
-		}
+func newFs() *fsutil.SymlinkFs {
+	return fsutil.NewOs(dryRun)
+}
 
-		viper.AddConfigPath(home + "/.claude-envs")
-		viper.SetConfigName("config")
-		viper.SetConfigType("toml")
+// loadManager loads config and creates a Manager with the appropriate filesystem.
+func loadManager() (*env.Manager, config.Paths, error) {
+	paths, err := config.DefaultPaths()
+	if err != nil {
+		return nil, paths, err
 	}
 
-	viper.SetEnvPrefix("CLAUDE_ENV")
-	viper.AutomaticEnv()
+	if cfgFile != "" {
+		paths.ConfigFile = cfgFile
+	}
 
-	_ = viper.ReadInConfig()
+	cfg, err := config.Load(paths.ConfigFile)
+	if err != nil {
+		return nil, paths, err
+	}
+
+	return env.New(paths, cfg, newFs()), paths, nil
+}
+
+// reconcileShared runs symlink reconciliation for the active environment.
+func reconcileShared(mgr *env.Manager, paths config.Paths) {
+	name, _, err := mgr.Current(mustCwd())
+	if err != nil {
+		return
+	}
+	e, ok := mgr.Cfg.Environments[name]
+	if !ok || len(e.Shared) == 0 {
+		return
+	}
+
+	r := symlink.New(paths.PoolDir, paths.ClaudeDir, paths.LockFile, newFs())
+	if err := r.Reconcile(e.Shared); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: symlink reconciliation failed: %v\n", err)
+	}
+}
+
+func mustCwd() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot determine working directory: %v\n", err)
+		os.Exit(1)
+	}
+	return dir
 }

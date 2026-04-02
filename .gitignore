@@ -20,6 +20,9 @@ coverage.html
 *.swo
 *~
 
+# claude-env local pin
+.claude-env
+
 # OS
 .DS_Store
 Thumbs.db
