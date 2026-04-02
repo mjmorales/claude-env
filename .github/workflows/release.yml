@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Override version (e.g. 1.0.0, without v prefix)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -23,6 +29,14 @@ jobs:
       - name: Determine version bump
         id: bump
         run: |
+          # Manual override via workflow_dispatch
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "new_version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Manual version override: ${{ inputs.version }}"
+            exit 0
+          fi
+
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
 
           if [ -z "$LATEST_TAG" ]; then
@@ -78,6 +92,10 @@ jobs:
         if: steps.bump.outputs.skip != 'true'
         run: |
           LATEST_TAG="${{ steps.bump.outputs.latest_tag }}"
+
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          fi
 
           if [ "$LATEST_TAG" = "v0.0.0" ]; then
             RANGE="HEAD"
