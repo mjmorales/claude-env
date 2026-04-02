@@ -1,0 +1,18 @@
+{
+  "schema_version": "3",
+  "validators": [],
+  "claude_md": {
+    "references": [
+      {"path": "$PLUGIN_DIR/references/creator-conventions.md", "label": "Creator Conventions"},
+      {"path": "$PLUGIN_DIR/references/interaction-patterns.md", "label": "Interaction Patterns"},
+      {"path": "$PLUGIN_DIR/references/llm-coding-standards.md", "label": "LLM Coding Standards"},
+      {"path": "$PLUGIN_DIR/references/prompt-engineering-guide.md", "label": "Prompt Engineering Guide"},
+      {"path": "$PLUGIN_DIR/references/validation-config.md", "label": "Validation Config"}
+    ]
+  },
+  "tools": {
+    "cafi": {
+      "enabled": false
+    }
+  }
+}
