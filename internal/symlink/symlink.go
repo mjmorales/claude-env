@@ -3,7 +3,9 @@ package symlink
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -113,6 +115,9 @@ func (r *Reconciler) createSymlink(name, src, dst string) (bool, error) {
 
 func (r *Reconciler) handleExisting(s, src, dst string) (bool, error) {
 	info, err := r.Fs.Lstat(dst)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("stat: %w", err)
 	}
@@ -177,7 +182,7 @@ func (r *Reconciler) targetPath(resource string) string {
 
 func (r *Reconciler) readLock() ([]string, error) {
 	f, err := r.Fs.Open(r.LockFile)
-	if os.IsNotExist(err) {
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
