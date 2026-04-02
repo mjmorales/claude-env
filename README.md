@@ -10,13 +10,26 @@ Each environment gets its own directory at `~/.claude-envs/<name>/` used as `CLA
 - Go 1.25+ (to build from source)
 - macOS (the `reset` command uses macOS Keychain; all other commands are platform-agnostic)
 
+## Installation
+
+```sh
+go install github.com/mjmorales/claude-env/cmd/claude-env@latest
+```
+
+This installs the `claude-env` binary to `$GOPATH/bin` (or `$HOME/go/bin` if `GOPATH` is unset). Make sure this directory is in your `PATH`.
+
+To build from a local clone instead:
+
+```sh
+git clone https://github.com/mjmorales/claude-env.git
+cd claude-env
+go install ./cmd/claude-env
+```
+
 ## Quick Start
 
 ```sh
-# 1. Build and install
-go install github.com/mjmorales/claude-env/cmd/claude-env@latest
-
-# 2. Initialize — adopts your existing ~/.claude credentials as "default"
+# 1. Initialize — adopts your existing ~/.claude credentials as "default"
 claude-env init
 
 # 3. Add shell integration (wraps the claude command automatically)
