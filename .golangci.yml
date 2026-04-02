@@ -1,37 +1,264 @@
+# .golangci.yml - Optimized for AI-assisted development
+# Focuses on keeping code simple and readable for both humans and AI agents
+
+version: "2"
+
 run:
   timeout: 5m
+  tests: true
+  build-tags:
+    - integration
+  go: '1.24'
+  modules-download-mode: readonly
+  allow-parallel-runners: true
 
 linters:
   enable:
-    - errcheck
-    - govet
-    - staticcheck
-    - unused
-    - gosimple
-    - ineffassign
-    - typecheck
-    - gocritic
-    - gofmt
-    - goimports
-    - misspell
-    - unconvert
-    - unparam
-    - prealloc
+    # Complexity guards - CRITICAL for AI agents
+    - gocyclo       # Cyclomatic complexity
+    - gocognit      # Cognitive complexity  
+    - funlen        # Function length
+    - nestif        # Nested if statements
+    - maintidx      # Maintainability index
+    - cyclop        # Another cyclomatic analyzer
+    
+    # Code clarity
+    - goconst       # Repeated strings that could be constants
+    - gocritic      # Lots of good checks
+    - prealloc      # Preallocate slices
+    - unconvert     # Unnecessary conversions
+    - unparam       # Unused parameters
+    - nakedret      # Naked returns (confusing for AI)
+    - nonamedreturns # Avoid named returns
+    
+    # Error handling (AI often misses these)
+    - errcheck      # Unchecked errors
+    - errorlint     # Error wrapping
+    - nilerr        # Improper nil error returns
+    - wrapcheck     # Error wrapping consistency
+    - errname       # Error naming conventions
+    - errchkjson    # JSON error checks
+    
+    # Best practices
+    - bodyclose     # HTTP body close
+    - contextcheck  # Context parameter positioning
+    - durationcheck # Time comparisons
+    - copyloopvar   # Loop variable issues
+    - noctx         # HTTP without context
+    - sqlclosecheck # SQL rows/statements closure
+    - rowserrcheck  # sql.Rows error check
+    
+    # Performance (without complexity cost)
+    - ineffassign   # Ineffective assignments
+    - wastedassign  # Wasted assignments
+    
+    # Style consistency (helps AI pattern recognition)
+    - misspell      # Spelling
+    - whitespace    # Trailing whitespace
+    - revive        # Configurable style rules
+    - godot         # Comments end with period
+    
+    # Security basics
+    - gosec         # Security issues
+    
+    # Testing
+    - testpackage   # Separate test packages
+    - tparallel     # Parallel test hygiene
+    - thelper       # Test helper consistency
+    
+    # Type safety (AI sometimes gets confused)
+    - forcetypeassert # No unchecked type assertions
+    - usestdlibvars   # Use stdlib constants
+    
+    # Interface design
+    - interfacebloat  # Keep interfaces small
+    - ireturn        # Accept interfaces, return structs
+    
+  disable:
+    # Too restrictive for pragmatic development
+    - exhaustive    # Exhaustive switches
+    - exhaustruct   # Exhaustive structs
+    - wsl           # Whitespace linter (too opinionated)
+    - nlreturn      # Newline before return (too rigid)
+    - varnamelen    # Variable name length
+    - lll           # Line length (editor handles)
+    
+    # Can conflict with cleaner AI-generated code
+    - mnd           # Magic numbers (sometimes constants hurt readability)
+    - paralleltest  # Parallel tests everywhere
+    - testableexamples # Example tests for everything
+    
+    # Too noisy
+    - godox         # TODO/FIXME comments
+    - depguard      # Import restrictions
+    - gochecknoglobals # No globals (sometimes needed)
+    - gochecknoinits   # No init functions (sometimes needed)
 
-linters-settings:
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
-    disabled-checks:
-      - hugeParam
-  goimports:
-    local-prefixes: github.com/mjmorales/claude-env
-  misspell:
-    locale: US
+  # CRITICAL: Complexity settings for AI-friendly code
+  settings:
+    gocyclo:
+      min-complexity: 10  # Lower than default 30 - keep functions simple
+    
+    gocognit:
+      min-complexity: 15  # Cognitive complexity limit
+    
+    cyclop:
+      max-complexity: 10  # Another cyclomatic check
+      package-average: 5  # Average complexity per package
+    
+    funlen:
+      lines: 80          # Max function length (including comments)
+      statements: 40     # Max statements in function - stricter than before
+      ignore-comments: false  # Count comments too
+      
+    nestif:
+      min-complexity: 4  # Max nested ifs - AI tends to nest too much
+    
+    maintidx:
+      under: 20          # Maintainability index threshold
+    
+    # Code clarity settings
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+      
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+        - experimental
+        - opinionated
+      disabled-checks:
+        - hugeParam       # Sometimes large structs are OK
+        - paramTypeCombine # Sometimes separate params are clearer
+        - whyNoLint       # Don't require explanations for nolint
+      settings:
+        captLocal:
+          paramsOnly: false
+        elseif:
+          skipBalanced: false
+    
+    revive:
+      severity: warning
+      enable-all-rules: false
+      rules:
+        # Complexity rules
+        - name: cognitive-complexity
+          arguments: [15]
+        - name: cyclomatic
+          arguments: [10]
+        - name: function-length
+          arguments: [40, 80]  # statements, lines
+        - name: argument-limit
+          arguments: [5]  # Max function arguments
+        - name: function-result-limit
+          arguments: [3]  # Max return values
+        - name: max-public-structs
+          arguments: [10]  # Per file
+          
+        # Clarity rules  
+        - name: add-constant
+          arguments:
+            - maxLitCount: "3"
+              allowStrs: '""'
+              allowInts: "0,1,2"
+        - name: confusing-naming
+        - name: confusing-results
+        - name: flag-parameter  # Bool params are confusing
+        - name: modifies-parameter
+        - name: deep-exit  # Returns deep in functions
+        - name: cognitive-complexity
+          arguments: [15]
+        
+        # Documentation
+        - name: exported
+        
+        # Best practices
+        - name: defer
+        - name: early-return
+        - name: if-return
+        - name: indent-error-flow
+        - name: useless-break
+        - name: unreachable-code
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: struct-tag
+        - name: unnecessary-stmt
+    
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      exclude-functions:
+        - io.Copy
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+    
+    nakedret:
+      max-func-lines: 20  # Only allow naked returns in tiny functions
+    
+    unparam:
+      check-exported: true
+    
+    misspell:
+      locale: US
+    
+    interfacebloat:
+      max: 5  # Max methods per interface
+    
+    godot:
+      scope: declarations
+      exclude:
+        - "^fixme:"
+        - "^todo:"
+
+formatters:
+  enable:
+    - gofumpt       # Stricter gofmt
+    - goimports     # Import organization
 
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0
+  fix: false  # Don't auto-fix, let developer decide
+
+output:
+  formats:
+    text:
+      colors: true
+  sort-order:
+    - linter
+    - severity
+    - file
+  show-stats: true
+
+severity:
+  default: warning
+  rules:
+    # Complexity issues are errors, not warnings
+    - linters:
+        - gocyclo
+        - gocognit
+        - funlen
+        - nestif
+        - maintidx
+        - cyclop
+      severity: error
+    
+    # Security issues are errors
+    - linters:
+        - gosec
+      severity: error
+    
+    # Style issues are info level
+    - linters:
+        - godot
+        - misspell
+        - whitespace
+      severity: info

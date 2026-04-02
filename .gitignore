@@ -1,5 +1,7 @@
+# Miscellaneous
 .prove/
 .task/checksum
+CLAUDE.md
 
 # Go
 dist/

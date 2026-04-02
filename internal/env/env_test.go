@@ -1,6 +1,7 @@
 package env_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -78,7 +79,7 @@ func TestInitAdoptsExistingCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != string(original) {
+	if !bytes.Equal(data, original) {
 		t.Fatalf("credentials = %q, want %q", data, original)
 	}
 }

@@ -14,8 +14,8 @@ import (
 // Read operations always pass through to the real underlying filesystem.
 type SymlinkFs struct {
 	afero.Fs
-	DryRun   bool
-	realFs   afero.Fs // always OsFs, used for reads in dry-run mode
+	DryRun bool
+	realFs afero.Fs // always OsFs, used for reads in dry-run mode
 }
 
 // New creates a SymlinkFs wrapping the given afero filesystem.

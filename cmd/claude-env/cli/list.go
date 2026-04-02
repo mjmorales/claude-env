@@ -19,24 +19,44 @@ var listCmd = &cobra.Command{
 			return err
 		}
 
-		envs := mgr.List(mustCwd())
+		dir := mustCwd()
+		_, source, _ := mgr.Current(dir)
+		envs := mgr.List(dir)
 		sort.Slice(envs, func(i, j int) bool { return envs[i].Name < envs[j].Name })
 
 		for _, e := range envs {
-			printEnv(e)
+			printEnv(e, source, mgr.Cfg.Global)
 		}
 		return nil
 	},
 }
 
-func printEnv(e env.EnvInfo) {
+func printEnv(e env.EnvInfo, source, global string) {
 	marker := "  "
 	if e.Active {
 		marker = "* "
 	}
 	fmt.Printf("%s%s", marker, e.Name)
+
+	var tags []string
+	if e.Name == global {
+		tags = append(tags, "global")
+	}
+	if e.Active && source != "global" {
+		tags = append(tags, "local")
+	}
 	if len(e.Shared) > 0 {
-		fmt.Printf(" (shared: %d)", len(e.Shared))
+		tags = append(tags, fmt.Sprintf("shared: %d", len(e.Shared)))
+	}
+	if len(tags) > 0 {
+		fmt.Printf(" (")
+		for i, tag := range tags {
+			if i > 0 {
+				fmt.Printf(", ")
+			}
+			fmt.Print(tag)
+		}
+		fmt.Printf(")")
 	}
 	fmt.Println()
 }
