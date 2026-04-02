@@ -12,6 +12,14 @@ Each environment gets its own directory at `~/.claude-envs/<name>/` used as `CLA
 
 ## Installation
 
+### Homebrew
+
+```sh
+brew install mjmorales/tap/claude-env
+```
+
+### Go
+
 ```sh
 go install github.com/mjmorales/claude-env/cmd/claude-env@latest
 ```
