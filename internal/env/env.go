@@ -1,6 +1,7 @@
 package env
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -55,6 +56,8 @@ func (m *Manager) Init() error {
 		fmt.Println("Created 'default' environment. Run 'claude-env login' to authenticate.")
 	}
 
+	m.copyBootstrapFiles(envDir)
+
 	m.Cfg.Global = "default"
 	m.Cfg.Environments["default"] = config.Environment{}
 
@@ -71,6 +74,8 @@ func (m *Manager) Add(name string) error {
 	if err := m.Fs.MkdirAll(envDir, 0o755); err != nil {
 		return fmt.Errorf("create env directory: %w", err)
 	}
+
+	m.copyBootstrapFiles(envDir)
 
 	m.Cfg.Environments[name] = config.Environment{}
 	return config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs)
@@ -116,6 +121,11 @@ func (m *Manager) Login(name string) error {
 	if err := c.Run(); err != nil {
 		return fmt.Errorf("claude auth login failed: %w", err)
 	}
+
+	// Ensure the global config has onboarding flags so interactive mode
+	// doesn't prompt for setup. Claude Code checks hasCompletedOnboarding
+	// and theme in .claude.json to decide whether to show onboarding.
+	m.patchClaudeConfig(envDir)
 
 	fmt.Fprintf(os.Stderr, "Environment %q authenticated.\n", name)
 	return nil
@@ -221,6 +231,69 @@ type EnvInfo struct {
 	Name   string
 	Active bool
 	Shared []string
+}
+
+// patchClaudeConfig ensures .claude.json in envDir has the flags Claude Code
+// needs to skip the interactive onboarding flow.
+func (m *Manager) patchClaudeConfig(envDir string) {
+	configPath := filepath.Join(envDir, ".claude.json")
+	data, err := m.Fs.ReadFile(configPath)
+	if err != nil {
+		return
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return
+	}
+
+	changed := false
+	if _, ok := cfg["hasCompletedOnboarding"]; !ok {
+		cfg["hasCompletedOnboarding"] = true
+		changed = true
+	}
+	if _, ok := cfg["theme"]; !ok {
+		cfg["theme"] = "dark"
+		changed = true
+	}
+
+	if !changed {
+		return
+	}
+
+	patched, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = m.Fs.WriteFile(configPath, patched, 0o600)
+}
+
+// bootstrapFiles are files from ~/.claude/ that Claude Code expects to find
+// in CLAUDE_CONFIG_DIR for a working session.
+var bootstrapFiles = []struct {
+	name string
+	perm os.FileMode
+}{
+	{"settings.json", 0o644},
+	{"CLAUDE.md", 0o644},
+}
+
+// copyBootstrapFiles copies essential config files from ~/.claude/ into envDir.
+// Missing source files are silently skipped.
+func (m *Manager) copyBootstrapFiles(envDir string) {
+	for _, f := range bootstrapFiles {
+		src := filepath.Join(m.Paths.ClaudeDir, f.name)
+		data, err := m.Fs.ReadFile(src)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		dst := filepath.Join(envDir, f.name)
+		// Don't overwrite if already exists.
+		if _, err := m.Fs.Stat(dst); err == nil {
+			continue
+		}
+		_ = m.Fs.WriteFile(dst, data, f.perm)
+	}
 }
 
 func trimNewline(s string) string {
