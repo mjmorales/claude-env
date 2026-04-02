@@ -17,11 +17,11 @@ var addCmd = &cobra.Command{
 
 		mgr, _, err := loadManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("load manager: %w", err)
 		}
 
 		if err := mgr.Add(name); err != nil {
-			return err
+			return fmt.Errorf("add environment: %w", err)
 		}
 
 		fmt.Fprintf(os.Stderr, "Added environment %q. Switch to it with: claude-env use %s\n", name, name)

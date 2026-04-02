@@ -1,3 +1,4 @@
+//nolint:revive // magic numbers and string constants OK in tests
 package env_test
 
 import (
@@ -16,6 +17,7 @@ func setupTestDirs(t *testing.T) (config.Paths, *fsutil.SymlinkFs) {
 	tmp := t.TempDir()
 
 	claudeDir := filepath.Join(tmp, ".claude")
+	//nolint:gosec // test directory
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -138,6 +140,7 @@ func TestCurrentResolvesLocal(t *testing.T) {
 	mgr := env.New(paths, cfg, fs)
 
 	projectDir := filepath.Join(t.TempDir(), "myproject")
+	//nolint:gosec // test directory
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

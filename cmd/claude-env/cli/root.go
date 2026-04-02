@@ -9,7 +9,6 @@ import (
 	"github.com/mjmorales/claude-env/internal/config"
 	"github.com/mjmorales/claude-env/internal/env"
 	"github.com/mjmorales/claude-env/internal/fsutil"
-	"github.com/mjmorales/claude-env/internal/symlink"
 )
 
 var (
@@ -17,14 +16,19 @@ var (
 	dryRun  bool
 )
 
+// rootCmd is the root command.
 var rootCmd = &cobra.Command{
 	Use:   "claude-env",
 	Short: "Manage multiple Claude Code subscriptions",
 	Long:  `claude-env manages multiple Claude Code OAuth sessions with easy swapping and declarative shared state (agents, skills, commands, plugins).`,
 }
 
+// Execute runs the CLI.
 func Execute() error {
-	return rootCmd.Execute()
+	if err := rootCmd.Execute(); err != nil {
+		return fmt.Errorf("execute: %w", err)
+	}
+	return nil
 }
 
 func init() {
@@ -40,7 +44,7 @@ func newFs() *fsutil.SymlinkFs {
 func loadManager() (*env.Manager, config.Paths, error) {
 	paths, err := config.DefaultPaths()
 	if err != nil {
-		return nil, paths, err
+		return nil, paths, fmt.Errorf("resolve default paths: %w", err)
 	}
 
 	if cfgFile != "" {
@@ -49,35 +53,17 @@ func loadManager() (*env.Manager, config.Paths, error) {
 
 	cfg, err := config.Load(paths.ConfigFile)
 	if err != nil {
-		return nil, paths, err
+		return nil, paths, fmt.Errorf("load config: %w", err)
 	}
 
 	return env.New(paths, cfg, newFs()), paths, nil
-}
-
-// reconcileShared runs symlink reconciliation for the active environment.
-// Shared resources from the pool are symlinked into the env's config dir.
-func reconcileShared(mgr *env.Manager, paths config.Paths) {
-	name, _, err := mgr.Current(mustCwd())
-	if err != nil {
-		return
-	}
-	e, ok := mgr.Cfg.Environments[name]
-	if !ok || len(e.Shared) == 0 {
-		return
-	}
-
-	envDir := paths.EnvDir(name)
-	r := symlink.New(paths.PoolDir, envDir, paths.LockFile, newFs())
-	if err := r.Reconcile(e.Shared); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: symlink reconciliation failed: %v\n", err)
-	}
 }
 
 func mustCwd() string {
 	dir, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: cannot determine working directory: %v\n", err)
+		//nolint:revive // os.Exit in helper is acceptable for CLI tools
 		os.Exit(1)
 	}
 	return dir

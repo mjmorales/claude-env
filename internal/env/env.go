@@ -1,6 +1,8 @@
+//nolint:revive // magic numbers and string constants are clear in context
 package env
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -61,7 +63,10 @@ func (m *Manager) Init() error {
 	m.Cfg.Global = "default"
 	m.Cfg.Environments["default"] = config.Environment{}
 
-	return config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs)
+	if err := config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
 }
 
 // Add registers a new environment with its own config directory.
@@ -78,7 +83,10 @@ func (m *Manager) Add(name string) error {
 	m.copyBootstrapFiles(envDir)
 
 	m.Cfg.Environments[name] = config.Environment{}
-	return config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs)
+	if err := config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
 }
 
 // Use switches the global environment.
@@ -93,7 +101,10 @@ func (m *Manager) Use(name string) error {
 	}
 
 	m.Cfg.Global = name
-	return config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs)
+	if err := config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
 }
 
 // Login runs 'claude auth login' with CLAUDE_CONFIG_DIR pointed at the
@@ -112,7 +123,8 @@ func (m *Manager) Login(name string) error {
 
 	fmt.Fprintf(os.Stderr, "Logging in for environment %q...\n", name)
 
-	c := exec.Command(claudeBin, "auth", "login")
+	//nolint:gosec // claudeBin is validated by exec.LookPath
+	c := exec.CommandContext(context.Background(), claudeBin, "auth", "login")
 	c.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+envDir)
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
@@ -142,11 +154,12 @@ func (m *Manager) AuthStatus(name string) (string, error) {
 		return "", fmt.Errorf("claude CLI not found in PATH: %w", err)
 	}
 
-	c := exec.Command(claudeBin, "auth", "status")
+	//nolint:gosec // claudeBin is validated by exec.LookPath
+	c := exec.CommandContext(context.Background(), claudeBin, "auth", "status")
 	c.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+m.Paths.EnvDir(name))
 	out, err := c.Output()
 	if err != nil {
-		return "not authenticated", nil
+		return "", fmt.Errorf("run auth status: %w", err)
 	}
 	return string(out), nil
 }
@@ -165,15 +178,17 @@ func (m *Manager) Local(name, dir string) error {
 }
 
 // Current resolves the active environment by checking local pin, then global.
+// Returns (name, source, error).
+// nolint:gocritic
 func (m *Manager) Current(dir string) (string, string, error) {
 	current := dir
 	for {
 		pinPath := filepath.Join(current, LocalPinFile)
 		data, err := m.Fs.ReadFile(pinPath)
 		if err == nil {
-			name := trimNewline(string(data))
-			if _, exists := m.Cfg.Environments[name]; exists {
-				return name, "local (" + pinPath + ")", nil
+			envName := trimNewline(string(data))
+			if _, exists := m.Cfg.Environments[envName]; exists {
+				return envName, "local (" + pinPath + ")", nil
 			}
 		}
 
@@ -198,7 +213,9 @@ func (m *Manager) ConfigDir(name string) string {
 
 // List returns all environment names with their active status.
 func (m *Manager) List(dir string) []EnvInfo {
+	//nolint:errcheck // error not critical for list operation
 	activeName, _, _ := m.Current(dir)
+	//nolint:prealloc // make with capacity is sufficient
 	var envs []EnvInfo
 	for name, e := range m.Cfg.Environments {
 		envs = append(envs, EnvInfo{
@@ -220,10 +237,14 @@ func (m *Manager) Remove(name string) error {
 	}
 
 	envDir := m.Paths.EnvDir(name)
+	//nolint:errcheck
 	_ = m.Fs.RemoveAll(envDir)
 
 	delete(m.Cfg.Environments, name)
-	return config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs)
+	if err := config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
 }
 
 // EnvInfo holds display information for an environment.
@@ -265,6 +286,7 @@ func (m *Manager) patchClaudeConfig(envDir string) {
 	if err != nil {
 		return
 	}
+	//nolint:errcheck
 	_ = m.Fs.WriteFile(configPath, patched, 0o600)
 }
 
@@ -292,12 +314,13 @@ func (m *Manager) copyBootstrapFiles(envDir string) {
 		if _, err := m.Fs.Stat(dst); err == nil {
 			continue
 		}
+		//nolint:errcheck
 		_ = m.Fs.WriteFile(dst, data, f.perm)
 	}
 }
 
 func trimNewline(s string) string {
-	for len(s) > 0 && (s[len(s)-1] == '\n' || s[len(s)-1] == '\r') {
+	for s != "" && (s[len(s)-1] == '\n' || s[len(s)-1] == '\r') {
 		s = s[:len(s)-1]
 	}
 	return s

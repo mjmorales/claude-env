@@ -17,12 +17,12 @@ var localCmd = &cobra.Command{
 
 		mgr, _, err := loadManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("load manager: %w", err)
 		}
 
 		dir := mustCwd()
 		if err := mgr.Local(name, dir); err != nil {
-			return err
+			return fmt.Errorf("pin environment: %w", err)
 		}
 
 		fmt.Fprintf(os.Stderr, "Pinned %q to %s\n", name, dir)

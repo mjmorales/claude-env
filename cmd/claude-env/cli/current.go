@@ -12,12 +12,12 @@ var currentCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		mgr, _, err := loadManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("load manager: %w", err)
 		}
 
 		name, source, err := mgr.Current(mustCwd())
 		if err != nil {
-			return err
+			return fmt.Errorf("get current environment: %w", err)
 		}
 
 		fmt.Printf("%s (%s)\n", name, source)

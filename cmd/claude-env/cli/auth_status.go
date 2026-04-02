@@ -15,7 +15,7 @@ var authStatusCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		mgr, _, err := loadManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("load manager: %w", err)
 		}
 
 		var name string
@@ -24,13 +24,13 @@ var authStatusCmd = &cobra.Command{
 		} else {
 			name, _, err = mgr.Current(mustCwd())
 			if err != nil {
-				return err
+				return fmt.Errorf("get current environment: %w", err)
 			}
 		}
 
 		out, err := mgr.AuthStatus(name)
 		if err != nil {
-			return err
+			return fmt.Errorf("auth status: %w", err)
 		}
 		fmt.Fprint(os.Stdout, out)
 		return nil

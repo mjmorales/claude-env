@@ -16,11 +16,14 @@ var listCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		mgr, _, err := loadManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("load manager: %w", err)
 		}
 
 		dir := mustCwd()
-		_, source, _ := mgr.Current(dir)
+		_, source, err := mgr.Current(dir)
+		if err != nil {
+			return fmt.Errorf("get current environment: %w", err)
+		}
 		envs := mgr.List(dir)
 		sort.Slice(envs, func(i, j int) bool { return envs[i].Name < envs[j].Name })
 

@@ -17,11 +17,11 @@ var removeCmd = &cobra.Command{
 
 		mgr, _, err := loadManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("load manager: %w", err)
 		}
 
 		if err := mgr.Remove(name); err != nil {
-			return err
+			return fmt.Errorf("remove environment: %w", err)
 		}
 
 		fmt.Fprintf(os.Stderr, "Removed environment %q\n", name)

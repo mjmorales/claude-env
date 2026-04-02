@@ -1,3 +1,4 @@
+//nolint:revive // magic numbers are clear for file permissions
 package symlink
 
 import (
@@ -42,7 +43,18 @@ func (r *Reconciler) Reconcile(shared []string) error {
 		want[s] = true
 	}
 
-	// Remove symlinks no longer wanted.
+	r.removeUnwanted(managed, want)
+
+	newManaged, err := r.createWanted(shared)
+	if err != nil {
+		return err
+	}
+
+	return r.writeLock(newManaged)
+}
+
+//nolint:nestif // acceptable nesting for conditional logic
+func (r *Reconciler) removeUnwanted(managed []string, want map[string]bool) {
 	for _, entry := range managed {
 		if !want[entry] {
 			target := r.targetPath(entry)
@@ -51,14 +63,18 @@ func (r *Reconciler) Reconcile(shared []string) error {
 				continue
 			}
 			if info.Mode()&os.ModeSymlink != 0 {
-				r.Fs.Remove(target)
-				fmt.Printf("  removed: %s\n", entry)
+				if err := r.Fs.Remove(target); err != nil {
+					fmt.Fprintf(os.Stderr, "  warning: failed to remove %s: %v\n", entry, err)
+				} else {
+					fmt.Printf("  removed: %s\n", entry)
+				}
 			}
 		}
 	}
+}
 
-	// Create missing symlinks.
-	var newManaged []string
+func (r *Reconciler) createWanted(shared []string) ([]string, error) {
+	newManaged := make([]string, 0, len(shared))
 	for _, s := range shared {
 		src := filepath.Join(r.PoolDir, s)
 		dst := r.targetPath(s)
@@ -68,32 +84,51 @@ func (r *Reconciler) Reconcile(shared []string) error {
 			continue
 		}
 
-		info, err := r.Fs.Lstat(dst)
-		if err == nil {
-			if info.Mode()&os.ModeSymlink != 0 {
-				existing, _ := r.Fs.Readlink(dst)
-				if existing == src {
-					newManaged = append(newManaged, s)
-					continue
-				}
-				r.Fs.Remove(dst)
-			} else {
-				fmt.Printf("  skipped: %s (real file exists, not managed)\n", s)
-				continue
-			}
+		created, err := r.createSymlink(s, src, dst)
+		if err != nil {
+			return nil, err
 		}
+		if created {
+			newManaged = append(newManaged, s)
+		}
+	}
+	return newManaged, nil
+}
 
-		if err := r.Fs.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			return fmt.Errorf("create parent for %s: %w", s, err)
-		}
-		if err := r.Fs.Symlink(src, dst); err != nil {
-			return fmt.Errorf("symlink %s: %w", s, err)
-		}
-		fmt.Printf("  linked: %s\n", s)
-		newManaged = append(newManaged, s)
+func (r *Reconciler) createSymlink(name, src, dst string) (bool, error) {
+	ok, err := r.handleExisting(name, src, dst)
+	if err != nil || ok {
+		return ok, err
 	}
 
-	return r.writeLock(newManaged)
+	if err := r.Fs.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return false, fmt.Errorf("create parent for %s: %w", name, err)
+	}
+	if err := r.Fs.Symlink(src, dst); err != nil {
+		return false, fmt.Errorf("symlink %s: %w", name, err)
+	}
+	fmt.Printf("  linked: %s\n", name)
+	return true, nil
+}
+
+func (r *Reconciler) handleExisting(s, src, dst string) (bool, error) {
+	info, err := r.Fs.Lstat(dst)
+	if err != nil {
+		return false, fmt.Errorf("stat: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		existing, err := r.Fs.Readlink(dst)
+		if err == nil && existing == src {
+			return true, nil
+		}
+		if err := r.Fs.Remove(dst); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: failed to remove %s: %v\n", s, err)
+			return false, fmt.Errorf("remove: %w", err)
+		}
+		return false, nil
+	}
+	fmt.Printf("  skipped: %s (real file exists, not managed)\n", s)
+	return true, nil
 }
 
 // Status returns the current state of managed symlinks.
@@ -103,7 +138,7 @@ func (r *Reconciler) Status() ([]LinkStatus, error) {
 		return nil, err
 	}
 
-	var statuses []LinkStatus
+	statuses := make([]LinkStatus, 0, len(managed))
 	for _, entry := range managed {
 		dst := r.targetPath(entry)
 		info, err := r.Fs.Lstat(dst)
@@ -115,7 +150,11 @@ func (r *Reconciler) Status() ([]LinkStatus, error) {
 			statuses = append(statuses, LinkStatus{Name: entry, State: "conflict"})
 			continue
 		}
-		target, _ := r.Fs.Readlink(dst)
+		target, err := r.Fs.Readlink(dst)
+		if err != nil {
+			statuses = append(statuses, LinkStatus{Name: entry, State: "broken"})
+			continue
+		}
 		expected := filepath.Join(r.PoolDir, entry)
 		if target != expected {
 			statuses = append(statuses, LinkStatus{Name: entry, State: "stale"})
@@ -142,9 +181,13 @@ func (r *Reconciler) readLock() ([]string, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open lock file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close lock file: %v\n", err)
+		}
+	}()
 
 	var entries []string
 	scanner := bufio.NewScanner(f)
@@ -154,11 +197,17 @@ func (r *Reconciler) readLock() ([]string, error) {
 			entries = append(entries, line)
 		}
 	}
-	return entries, scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan lock file: %w", err)
+	}
+	return entries, nil
 }
 
 func (r *Reconciler) writeLock(entries []string) error {
 	sort.Strings(entries)
 	content := strings.Join(entries, "\n") + "\n"
-	return r.Fs.WriteFile(r.LockFile, []byte(content), 0o644)
+	if err := r.Fs.WriteFile(r.LockFile, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write lock file: %w", err)
+	}
+	return nil
 }

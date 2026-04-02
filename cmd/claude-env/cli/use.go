@@ -18,11 +18,11 @@ var useCmd = &cobra.Command{
 
 		mgr, _, err := loadManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("load manager: %w", err)
 		}
 
 		if err := mgr.Use(name); err != nil {
-			return err
+			return fmt.Errorf("switch environment: %w", err)
 		}
 
 		fmt.Fprintf(os.Stderr, "Switched to %q (CLAUDE_CONFIG_DIR=%s)\n", name, mgr.ConfigDir(name))

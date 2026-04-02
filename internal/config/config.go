@@ -1,3 +1,4 @@
+//nolint:revive // magic numbers are clear for file permissions
 package config
 
 import (
@@ -8,6 +9,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+// Config file and directory names.
 const (
 	EnvsDirName  = ".claude-envs"
 	ConfigFile   = "config.toml"
@@ -65,8 +67,9 @@ func (p Paths) EnvDir(name string) string {
 }
 
 // Load reads the config from disk. Returns a zero Config if the file doesn't exist.
+// The path is trusted (constructed by the application, not user-controlled).
 func Load(path string) (Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //#nosec G304
 	if os.IsNotExist(err) {
 		return Config{Environments: make(map[string]Environment)}, nil
 	}

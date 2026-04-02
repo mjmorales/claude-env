@@ -26,12 +26,12 @@ var execCmd = &cobra.Command{
 
 		mgr, _, err := loadManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("load manager: %w", err)
 		}
 
 		name, _, err := mgr.Current(mustCwd())
 		if err != nil {
-			return err
+			return fmt.Errorf("get current environment: %w", err)
 		}
 
 		envDir := mgr.ConfigDir(name)
@@ -41,6 +41,7 @@ var execCmd = &cobra.Command{
 		}
 
 		environ := append(os.Environ(), "CLAUDE_CONFIG_DIR="+envDir)
+		//nolint:gosec // binary is validated by exec.LookPath
 		return syscall.Exec(binary, args, environ)
 	},
 }

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 )
 
@@ -13,7 +15,7 @@ environment's directory. If no name given, uses the current environment.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		mgr, _, err := loadManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("load manager: %w", err)
 		}
 
 		var name string
@@ -22,11 +24,14 @@ environment's directory. If no name given, uses the current environment.`,
 		} else {
 			name, _, err = mgr.Current(mustCwd())
 			if err != nil {
-				return err
+				return fmt.Errorf("get current environment: %w", err)
 			}
 		}
 
-		return mgr.Login(name)
+		if err := mgr.Login(name); err != nil {
+			return fmt.Errorf("login: %w", err)
+		}
+		return nil
 	},
 }
 

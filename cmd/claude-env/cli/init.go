@@ -14,11 +14,11 @@ var initCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		mgr, _, err := loadManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("load manager: %w", err)
 		}
 
 		if err := mgr.Init(); err != nil {
-			return err
+			return fmt.Errorf("initialize: %w", err)
 		}
 
 		fmt.Fprintln(os.Stderr, "Initialized. Active environment: default")

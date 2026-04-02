@@ -1,3 +1,4 @@
+//nolint:gocyclo,cyclop,revive // tests have multiple branches for different scenarios
 package symlink_test
 
 import (
@@ -19,10 +20,22 @@ func TestReconcileCreatesSymlinks(t *testing.T) {
 	target := filepath.Join(tmp, "claude")
 	lockFile := filepath.Join(tmp, "lock")
 
-	os.MkdirAll(filepath.Join(pool, "skills", "brainstorm"), 0o755)
-	os.MkdirAll(filepath.Join(pool, "agents"), 0o755)
-	os.WriteFile(filepath.Join(pool, "agents", "reviewer"), []byte("agent"), 0o644)
-	os.MkdirAll(target, 0o755)
+	//nolint:gosec // test directory
+	if err := os.MkdirAll(filepath.Join(pool, "skills", "brainstorm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:gosec // test directory
+	if err := os.MkdirAll(filepath.Join(pool, "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:gosec // test file
+	if err := os.WriteFile(filepath.Join(pool, "agents", "reviewer"), []byte("agent"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:gosec // test directory
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	r := symlink.New(pool, target, lockFile, newTestFs())
 
@@ -62,9 +75,18 @@ func TestReconcileRemovesStale(t *testing.T) {
 	target := filepath.Join(tmp, "claude")
 	lockFile := filepath.Join(tmp, "lock")
 
-	os.MkdirAll(filepath.Join(pool, "skills", "old"), 0o755)
-	os.MkdirAll(filepath.Join(pool, "skills", "new"), 0o755)
-	os.MkdirAll(target, 0o755)
+	//nolint:gosec // test directory
+	if err := os.MkdirAll(filepath.Join(pool, "skills", "old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:gosec // test directory
+	if err := os.MkdirAll(filepath.Join(pool, "skills", "new"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:gosec // test directory
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	r := symlink.New(pool, target, lockFile, newTestFs())
 
@@ -90,19 +112,34 @@ func TestReconcileSkipsRealFiles(t *testing.T) {
 	target := filepath.Join(tmp, "claude")
 	lockFile := filepath.Join(tmp, "lock")
 
-	os.MkdirAll(filepath.Join(pool, "skills", "mine"), 0o755)
-	os.MkdirAll(target, 0o755)
+	//nolint:gosec // test directory
+	if err := os.MkdirAll(filepath.Join(pool, "skills", "mine"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:gosec // test directory
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	realPath := filepath.Join(target, "skills", "mine")
-	os.MkdirAll(filepath.Dir(realPath), 0o755)
-	os.WriteFile(realPath, []byte("real"), 0o644)
+	//nolint:gosec // test directory
+	if err := os.MkdirAll(filepath.Dir(realPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:gosec // test file
+	if err := os.WriteFile(realPath, []byte("real"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	r := symlink.New(pool, target, lockFile, newTestFs())
 	if err := r.Reconcile([]string{"skills/mine"}); err != nil {
 		t.Fatal(err)
 	}
 
-	info, _ := os.Lstat(realPath)
+	info, err := os.Lstat(realPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		t.Fatal("expected real file to be preserved, not replaced with symlink")
 	}
