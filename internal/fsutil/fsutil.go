@@ -78,6 +78,15 @@ func (s *SymlinkFs) Rename(oldname, newname string) error {
 	return s.Fs.Rename(oldname, newname)
 }
 
+// RemoveAll removes a path and all children. In dry-run mode, logs and succeeds.
+func (s *SymlinkFs) RemoveAll(path string) error {
+	if s.DryRun {
+		fmt.Printf("[dry-run] remove -rf %s\n", path)
+		return nil
+	}
+	return os.RemoveAll(path)
+}
+
 // OpenFile opens a file. In dry-run mode for write flags, logs and returns a mem file.
 func (s *SymlinkFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
 	if s.DryRun && (flag&(os.O_WRONLY|os.O_RDWR|os.O_CREATE|os.O_TRUNC)) != 0 {

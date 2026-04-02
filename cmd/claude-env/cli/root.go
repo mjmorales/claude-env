@@ -56,6 +56,7 @@ func loadManager() (*env.Manager, config.Paths, error) {
 }
 
 // reconcileShared runs symlink reconciliation for the active environment.
+// Shared resources from the pool are symlinked into the env's config dir.
 func reconcileShared(mgr *env.Manager, paths config.Paths) {
 	name, _, err := mgr.Current(mustCwd())
 	if err != nil {
@@ -66,7 +67,8 @@ func reconcileShared(mgr *env.Manager, paths config.Paths) {
 		return
 	}
 
-	r := symlink.New(paths.PoolDir, paths.ClaudeDir, paths.LockFile, newFs())
+	envDir := paths.EnvDir(name)
+	r := symlink.New(paths.PoolDir, envDir, paths.LockFile, newFs())
 	if err := r.Reconcile(e.Shared); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: symlink reconciliation failed: %v\n", err)
 	}

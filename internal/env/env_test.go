@@ -26,16 +26,43 @@ func setupTestDirs(t *testing.T) (config.Paths, *fsutil.SymlinkFs) {
 		PoolDir:    filepath.Join(envsDir, "pool"),
 		LockFile:   filepath.Join(envsDir, ".managed-symlinks"),
 		ClaudeDir:  claudeDir,
-		CredsFile:  filepath.Join(claudeDir, ".credentials.json"),
 	}
 	return paths, fsutil.NewOs(false)
+}
+
+func TestInitCreatesEnvDir(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := env.New(paths, cfg, fs)
+
+	if err := mgr.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Default env dir should exist.
+	envDir := paths.EnvDir("default")
+	if _, err := os.Stat(envDir); err != nil {
+		t.Fatalf("expected env dir %s to exist: %v", envDir, err)
+	}
+
+	// Config should be written.
+	if _, err := os.Stat(paths.ConfigFile); err != nil {
+		t.Fatalf("expected config file to exist: %v", err)
+	}
+
+	// Global should be "default".
+	if mgr.Cfg.Global != "default" {
+		t.Fatalf("global = %q, want 'default'", mgr.Cfg.Global)
+	}
 }
 
 func TestInitAdoptsExistingCredentials(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
-	original := []byte(`{"token": "abc123"}`)
-	if err := os.WriteFile(paths.CredsFile, original, 0o600); err != nil {
+	// Create fake existing .claude.json.
+	original := []byte(`{"oauthAccount": {"token": "abc123"}}`)
+	if err := os.WriteFile(filepath.Join(paths.ClaudeDir, ".claude.json"), original, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -46,48 +73,27 @@ func TestInitAdoptsExistingCredentials(t *testing.T) {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	info, err := os.Lstat(paths.CredsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		t.Fatal("expected credentials file to be a symlink after init")
-	}
-
-	target, err := os.Readlink(paths.CredsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	expected := filepath.Join(paths.EnvsDir, "default.credentials.json")
-	if target != expected {
-		t.Fatalf("symlink target = %q, want %q", target, expected)
-	}
-
-	data, err := os.ReadFile(paths.CredsFile)
+	// Credentials should be copied to the env dir.
+	data, err := os.ReadFile(filepath.Join(paths.EnvDir("default"), ".claude.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(data) != string(original) {
-		t.Fatalf("credentials content = %q, want %q", data, original)
+		t.Fatalf("credentials = %q, want %q", data, original)
 	}
 }
 
-func TestInitNoExistingCredentials(t *testing.T) {
+func TestInitAlreadyInitialized(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
 	mgr := env.New(paths, cfg, fs)
 
 	if err := mgr.Init(); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	data, err := os.ReadFile(paths.CredsFile)
-	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{}" {
-		t.Fatalf("expected empty JSON, got %q", data)
+	if err := mgr.Init(); err == nil {
+		t.Fatal("expected error on double init")
 	}
 }
 
@@ -105,29 +111,16 @@ func TestAddAndUse(t *testing.T) {
 		t.Fatalf("Add failed: %v", err)
 	}
 
-	workCreds := filepath.Join(paths.EnvsDir, "work.credentials.json")
-	if err := os.WriteFile(workCreds, []byte(`{"token": "work-token"}`), 0o600); err != nil {
-		t.Fatal(err)
+	// Env dir should exist.
+	if _, err := os.Stat(paths.EnvDir("work")); err != nil {
+		t.Fatalf("expected work env dir to exist: %v", err)
 	}
 
 	if err := mgr.Use("work"); err != nil {
 		t.Fatalf("Use failed: %v", err)
 	}
-
-	target, err := os.Readlink(paths.CredsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if target != workCreds {
-		t.Fatalf("symlink = %q, want %q", target, workCreds)
-	}
-
-	data, err := os.ReadFile(paths.CredsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != `{"token": "work-token"}` {
-		t.Fatalf("credentials = %q", data)
+	if mgr.Cfg.Global != "work" {
+		t.Fatalf("global = %q, want 'work'", mgr.Cfg.Global)
 	}
 }
 
@@ -137,8 +130,8 @@ func TestCurrentResolvesLocal(t *testing.T) {
 	cfg := config.Config{
 		Global: "default",
 		Environments: map[string]config.Environment{
-			"default": {Credentials: "default.credentials.json"},
-			"work":    {Credentials: "work.credentials.json"},
+			"default": {},
+			"work":    {},
 		},
 	}
 	mgr := env.New(paths, cfg, fs)
@@ -169,7 +162,7 @@ func TestCurrentFallsBackToGlobal(t *testing.T) {
 
 	cfg := config.Config{
 		Global:       "default",
-		Environments: map[string]config.Environment{"default": {Credentials: "default.credentials.json"}},
+		Environments: map[string]config.Environment{"default": {}},
 	}
 	mgr := env.New(paths, cfg, fs)
 
@@ -199,6 +192,12 @@ func TestRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Dir should be gone.
+	if _, err := os.Stat(paths.EnvDir("work")); !os.IsNotExist(err) {
+		t.Fatal("expected work env dir to be removed")
+	}
+
+	// Can't remove active global.
 	if err := mgr.Remove("default"); err == nil {
 		t.Fatal("expected error removing active global environment")
 	}
@@ -213,7 +212,6 @@ func TestAddDuplicate(t *testing.T) {
 	if err := mgr.Init(); err != nil {
 		t.Fatal(err)
 	}
-
 	if err := mgr.Add("default"); err == nil {
 		t.Fatal("expected error adding duplicate environment")
 	}
@@ -227,5 +225,21 @@ func TestUseNonexistent(t *testing.T) {
 
 	if err := mgr.Use("nonexistent"); err == nil {
 		t.Fatal("expected error using nonexistent environment")
+	}
+}
+
+func TestConfigDir(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+
+	cfg := config.Config{
+		Global:       "myenv",
+		Environments: map[string]config.Environment{"myenv": {}},
+	}
+	mgr := env.New(paths, cfg, fs)
+
+	got := mgr.ConfigDir("myenv")
+	want := filepath.Join(paths.EnvsDir, "myenv")
+	if got != want {
+		t.Fatalf("ConfigDir = %q, want %q", got, want)
 	}
 }

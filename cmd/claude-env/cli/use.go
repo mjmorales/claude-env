@@ -11,12 +11,12 @@ var useCmd = &cobra.Command{
 	Use:     "use <name>",
 	Aliases: []string{"global"},
 	Short:   "Switch the global environment",
-	Long:    `Swaps the credential symlink at ~/.claude/.credentials.json and reconciles shared resources.`,
+	Long:    `Sets the global active environment. The claude shim will use this to set CLAUDE_CONFIG_DIR.`,
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 
-		mgr, paths, err := loadManager()
+		mgr, _, err := loadManager()
 		if err != nil {
 			return err
 		}
@@ -25,8 +25,7 @@ var useCmd = &cobra.Command{
 			return err
 		}
 
-		reconcileShared(mgr, paths)
-		fmt.Fprintf(os.Stderr, "Switched to %q\n", name)
+		fmt.Fprintf(os.Stderr, "Switched to %q (CLAUDE_CONFIG_DIR=%s)\n", name, mgr.ConfigDir(name))
 		return nil
 	},
 }

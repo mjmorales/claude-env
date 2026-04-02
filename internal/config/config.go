@@ -17,7 +17,6 @@ const (
 
 // Environment represents a single Claude Code subscription environment.
 type Environment struct {
-	Credentials      string   `toml:"credentials"`
 	Shared           []string `toml:"shared,omitempty"`
 	SettingsOverride string   `toml:"settings_override,omitempty"`
 }
@@ -34,8 +33,7 @@ type Paths struct {
 	ConfigFile string
 	PoolDir    string
 	LockFile   string
-	ClaudeDir  string
-	CredsFile  string
+	ClaudeDir  string // default ~/.claude (used for symlink pool targets)
 }
 
 // Writer abstracts file writing for dry-run support.
@@ -58,8 +56,12 @@ func DefaultPaths() (Paths, error) {
 		PoolDir:    filepath.Join(envsDir, PoolDirName),
 		LockFile:   filepath.Join(envsDir, LockFileName),
 		ClaudeDir:  filepath.Join(home, ".claude"),
-		CredsFile:  filepath.Join(home, ".claude", ".credentials.json"),
 	}, nil
+}
+
+// EnvDir returns the config directory path for a named environment.
+func (p Paths) EnvDir(name string) string {
+	return filepath.Join(p.EnvsDir, name)
 }
 
 // Load reads the config from disk. Returns a zero Config if the file doesn't exist.

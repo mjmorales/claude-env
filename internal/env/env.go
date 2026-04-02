@@ -1,9 +1,9 @@
 package env
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/mjmorales/claude-env/internal/config"
@@ -24,7 +24,8 @@ func New(paths config.Paths, cfg config.Config, fs *fsutil.SymlinkFs) *Manager {
 	return &Manager{Paths: paths, Cfg: cfg, Fs: fs}
 }
 
-// Init sets up ~/.claude-envs/ and adopts existing credentials as "default".
+// Init sets up ~/.claude-envs/ and creates a "default" environment.
+// If Claude Code is currently authenticated, snapshots that into the default env.
 func (m *Manager) Init() error {
 	if err := m.Fs.MkdirAll(m.Paths.EnvsDir, 0o755); err != nil {
 		return fmt.Errorf("create envs directory: %w", err)
@@ -37,75 +38,107 @@ func (m *Manager) Init() error {
 		return fmt.Errorf("already initialized (environment 'default' exists)")
 	}
 
-	credsPath := m.credentialPath("default")
-	existingCreds := m.Paths.CredsFile
-
-	// Check existing credentials — use Lstat to detect symlinks.
-	info, err := m.Fs.Lstat(existingCreds)
-	if err == nil && info.Mode().IsRegular() {
-		if err := m.Fs.Rename(existingCreds, credsPath); err != nil {
-			return fmt.Errorf("move existing credentials: %w", err)
-		}
-		fmt.Println("Adopted existing credentials as 'default' environment.")
-	} else if err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("credentials file is already a symlink — already managed?")
-	} else {
-		if err := m.Fs.WriteFile( credsPath, []byte("{}"), 0o600); err != nil {
-			return fmt.Errorf("create credential placeholder: %w", err)
-		}
-		fmt.Println("No existing credentials found. Created empty 'default' environment.")
+	envDir := m.Paths.EnvDir("default")
+	if err := m.Fs.MkdirAll(envDir, 0o755); err != nil {
+		return fmt.Errorf("create default env directory: %w", err)
 	}
 
-	if err := m.Fs.ForceSymlink(credsPath, existingCreds); err != nil {
-		return fmt.Errorf("symlink credentials: %w", err)
+	// Copy existing ~/.claude/.claude.json into the new env dir if it exists.
+	existingCreds := filepath.Join(m.Paths.ClaudeDir, ".claude.json")
+	if data, err := m.Fs.ReadFile(existingCreds); err == nil && len(data) > 0 {
+		dst := filepath.Join(envDir, ".claude.json")
+		if err := m.Fs.WriteFile(dst, data, 0o600); err != nil {
+			return fmt.Errorf("copy existing credentials: %w", err)
+		}
+		fmt.Println("Adopted existing credentials as 'default' environment.")
+	} else {
+		fmt.Println("Created 'default' environment. Run 'claude-env login' to authenticate.")
 	}
 
 	m.Cfg.Global = "default"
-	m.Cfg.Environments["default"] = config.Environment{
-		Credentials: filepath.Base(credsPath),
-	}
+	m.Cfg.Environments["default"] = config.Environment{}
 
 	return config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs)
 }
 
-// Add registers a new environment with an empty credential file.
+// Add registers a new environment with its own config directory.
 func (m *Manager) Add(name string) error {
 	if _, exists := m.Cfg.Environments[name]; exists {
 		return fmt.Errorf("environment %q already exists", name)
 	}
 
-	credsFile := name + ".credentials.json"
-	credsPath := filepath.Join(m.Paths.EnvsDir, credsFile)
-
-	if err := m.Fs.WriteFile( credsPath, []byte("{}"), 0o600); err != nil {
-		return fmt.Errorf("create credential file: %w", err)
+	envDir := m.Paths.EnvDir(name)
+	if err := m.Fs.MkdirAll(envDir, 0o755); err != nil {
+		return fmt.Errorf("create env directory: %w", err)
 	}
 
-	m.Cfg.Environments[name] = config.Environment{
-		Credentials: credsFile,
-	}
-
+	m.Cfg.Environments[name] = config.Environment{}
 	return config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs)
 }
 
 // Use switches the global environment.
 func (m *Manager) Use(name string) error {
-	env, exists := m.Cfg.Environments[name]
-	if !exists {
+	if _, exists := m.Cfg.Environments[name]; !exists {
 		return fmt.Errorf("environment %q not found", name)
 	}
 
-	credsPath := filepath.Join(m.Paths.EnvsDir, env.Credentials)
-	if _, err := m.Fs.Stat(credsPath); err != nil {
-		return fmt.Errorf("credential file missing for %q: %w", name, err)
-	}
-
-	if err := m.Fs.ForceSymlink(credsPath, m.Paths.CredsFile); err != nil {
-		return fmt.Errorf("swap credentials symlink: %w", err)
+	envDir := m.Paths.EnvDir(name)
+	if _, err := m.Fs.Stat(envDir); err != nil {
+		return fmt.Errorf("env directory missing for %q: %w", name, err)
 	}
 
 	m.Cfg.Global = name
 	return config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs)
+}
+
+// Login runs 'claude auth login' with CLAUDE_CONFIG_DIR pointed at the
+// named environment's directory.
+func (m *Manager) Login(name string) error {
+	if _, exists := m.Cfg.Environments[name]; !exists {
+		return fmt.Errorf("environment %q not found", name)
+	}
+
+	envDir := m.Paths.EnvDir(name)
+
+	claudeBin, err := exec.LookPath("claude")
+	if err != nil {
+		return fmt.Errorf("claude CLI not found in PATH: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Logging in for environment %q...\n", name)
+
+	c := exec.Command(claudeBin, "auth", "login")
+	c.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+envDir)
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("claude auth login failed: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Environment %q authenticated.\n", name)
+	return nil
+}
+
+// AuthStatus returns the auth status for the named environment.
+func (m *Manager) AuthStatus(name string) (string, error) {
+	if _, exists := m.Cfg.Environments[name]; !exists {
+		return "", fmt.Errorf("environment %q not found", name)
+	}
+
+	claudeBin, err := exec.LookPath("claude")
+	if err != nil {
+		return "", fmt.Errorf("claude CLI not found in PATH: %w", err)
+	}
+
+	c := exec.Command(claudeBin, "auth", "status")
+	c.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+m.Paths.EnvDir(name))
+	out, err := c.Output()
+	if err != nil {
+		return "not authenticated", nil
+	}
+	return string(out), nil
 }
 
 // Local pins an environment to the current directory.
@@ -115,7 +148,7 @@ func (m *Manager) Local(name, dir string) error {
 	}
 
 	pinPath := filepath.Join(dir, LocalPinFile)
-	if err := m.Fs.WriteFile( pinPath, []byte(name+"\n"), 0o644); err != nil {
+	if err := m.Fs.WriteFile(pinPath, []byte(name+"\n"), 0o644); err != nil {
 		return fmt.Errorf("write local pin file: %w", err)
 	}
 	return nil
@@ -148,6 +181,11 @@ func (m *Manager) Current(dir string) (string, string, error) {
 	return "", "", fmt.Errorf("no environment set (run 'claude-env init' first)")
 }
 
+// ConfigDir returns the CLAUDE_CONFIG_DIR for a given environment name.
+func (m *Manager) ConfigDir(name string) string {
+	return m.Paths.EnvDir(name)
+}
+
 // List returns all environment names with their active status.
 func (m *Manager) List(dir string) []EnvInfo {
 	activeName, _, _ := m.Current(dir)
@@ -156,55 +194,33 @@ func (m *Manager) List(dir string) []EnvInfo {
 		envs = append(envs, EnvInfo{
 			Name:   name,
 			Active: name == activeName,
-			Creds:  e.Credentials,
 			Shared: e.Shared,
 		})
 	}
 	return envs
 }
 
-// Remove deletes an environment and its credential file.
+// Remove deletes an environment and its config directory.
 func (m *Manager) Remove(name string) error {
-	env, exists := m.Cfg.Environments[name]
-	if !exists {
+	if _, exists := m.Cfg.Environments[name]; !exists {
 		return fmt.Errorf("environment %q not found", name)
 	}
 	if m.Cfg.Global == name {
 		return fmt.Errorf("cannot remove the active global environment — switch first")
 	}
 
-	credsPath := filepath.Join(m.Paths.EnvsDir, env.Credentials)
-	_ = m.Fs.Remove(credsPath)
+	envDir := m.Paths.EnvDir(name)
+	_ = m.Fs.RemoveAll(envDir)
 
 	delete(m.Cfg.Environments, name)
 	return config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs)
-}
-
-// ImportCredentials copies a credentials JSON blob into the named environment.
-func (m *Manager) ImportCredentials(name string, data []byte) error {
-	env, exists := m.Cfg.Environments[name]
-	if !exists {
-		return fmt.Errorf("environment %q not found", name)
-	}
-
-	if !json.Valid(data) {
-		return fmt.Errorf("invalid JSON credentials")
-	}
-
-	credsPath := filepath.Join(m.Paths.EnvsDir, env.Credentials)
-	return m.Fs.WriteFile( credsPath, data, 0o600)
 }
 
 // EnvInfo holds display information for an environment.
 type EnvInfo struct {
 	Name   string
 	Active bool
-	Creds  string
 	Shared []string
-}
-
-func (m *Manager) credentialPath(name string) string {
-	return filepath.Join(m.Paths.EnvsDir, name+".credentials.json")
 }
 
 func trimNewline(s string) string {
