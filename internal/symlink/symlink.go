@@ -23,12 +23,12 @@ type Reconciler struct {
 }
 
 // New creates a symlink reconciler.
-func New(poolDir, targetDir, lockFile string, fs *fsutil.SymlinkFs) *Reconciler {
+func New(poolDir, targetDir, lockFile string, symLinkFs *fsutil.SymlinkFs) *Reconciler {
 	return &Reconciler{
 		PoolDir:   poolDir,
 		TargetDir: targetDir,
 		LockFile:  lockFile,
-		Fs:        fs,
+		Fs:        symLinkFs,
 	}
 }
 
