@@ -222,3 +222,84 @@ jobs:
             --title "${TAG}" \
             --notes "${{ needs.version.outputs.changelog }}" \
             claude-env-* checksums.sha256
+
+  homebrew:
+    name: Update Homebrew Tap
+    runs-on: ubuntu-latest
+    needs: [version, publish]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Read checksums
+        id: sha
+        run: |
+          cd artifacts
+          echo "darwin_amd64=$(grep 'claude-env-darwin-amd64$' checksums.sha256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "darwin_arm64=$(grep 'claude-env-darwin-arm64$' checksums.sha256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_amd64=$(grep 'claude-env-linux-amd64$' checksums.sha256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_arm64=$(grep 'claude-env-linux-arm64$' checksums.sha256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Generate formula
+        env:
+          VERSION: ${{ needs.version.outputs.new_version }}
+          SHA_DARWIN_AMD64: ${{ steps.sha.outputs.darwin_amd64 }}
+          SHA_DARWIN_ARM64: ${{ steps.sha.outputs.darwin_arm64 }}
+          SHA_LINUX_AMD64: ${{ steps.sha.outputs.linux_amd64 }}
+          SHA_LINUX_ARM64: ${{ steps.sha.outputs.linux_arm64 }}
+        run: |
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}"
+          cat > claude-env.rb <<FORMULA
+          class ClaudeEnv < Formula
+            desc "Manage multiple Claude Code OAuth sessions with easy switching"
+            homepage "https://github.com/${{ github.repository }}"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "${BASE_URL}/claude-env-darwin-arm64"
+                sha256 "${SHA_DARWIN_ARM64}"
+              else
+                url "${BASE_URL}/claude-env-darwin-amd64"
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "${BASE_URL}/claude-env-linux-arm64"
+                sha256 "${SHA_LINUX_ARM64}"
+              else
+                url "${BASE_URL}/claude-env-linux-amd64"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              binary = Dir["claude-env-*"].first
+              bin.install binary => "claude-env"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/claude-env version")
+            end
+          end
+          FORMULA
+
+      - name: Push to tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/mjmorales/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp claude-env.rb tap/Formula/claude-env.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/claude-env.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "claude-env ${VERSION}"
+          git push
