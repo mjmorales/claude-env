@@ -1,3 +1,4 @@
+//nolint:revive // magic numbers are clear in formatting context
 package cli
 
 import (
@@ -21,7 +22,7 @@ var (
 var usageCmd = &cobra.Command{
 	Use:   "usage [name]",
 	Short: "Show token usage and estimated costs",
-	Long:  `Display token consumption, estimated costs, and rate limit reference for Claude Code sessions. Parses session data from environment directories.`,
+	Long:  `Display token consumption, estimated costs, and rate limit status for Claude Code sessions. Parses session data from environment directories.`,
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		mgr, _, err := loadManager()
@@ -31,29 +32,36 @@ var usageCmd = &cobra.Command{
 
 		since, err := usage.ParseSince(usageSince)
 		if err != nil {
-			return err
+			return fmt.Errorf("parse --since: %w", err)
 		}
 
 		if usageAll {
 			return showAllEnvUsage(mgr, since)
 		}
 
-		var envName string
-		if len(args) > 0 {
-			envName = args[0]
-			if _, exists := mgr.Cfg.Environments[envName]; !exists {
-				return fmt.Errorf("environment %q not found", envName)
-			}
-		} else {
-			name, _, err := mgr.Current(mustCwd())
-			if err != nil {
-				return err
-			}
-			envName = name
+		envName, err := resolveEnvName(mgr, args)
+		if err != nil {
+			return err
 		}
 
 		return showEnvUsage(envName, mgr.Paths.EnvDir(envName), since)
 	},
+}
+
+func resolveEnvName(mgr *env.Manager, args []string) (string, error) {
+	if len(args) > 0 {
+		name := args[0]
+		if _, exists := mgr.Cfg.Environments[name]; !exists {
+			return "", fmt.Errorf("environment %q not found", name)
+		}
+		return name, nil
+	}
+
+	name, _, err := mgr.Current(mustCwd())
+	if err != nil {
+		return "", fmt.Errorf("resolve current environment: %w", err)
+	}
+	return name, nil
 }
 
 func init() {
@@ -62,12 +70,10 @@ func init() {
 	rootCmd.AddCommand(usageCmd)
 }
 
+const rateWindowMinutes = 5
+
 func showAllEnvUsage(mgr *env.Manager, since time.Time) error {
-	names := make([]string, 0, len(mgr.Cfg.Environments))
-	for name := range mgr.Cfg.Environments {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := sortedEnvNames(mgr)
 
 	for i, name := range names {
 		if i > 0 {
@@ -77,7 +83,18 @@ func showAllEnvUsage(mgr *env.Manager, since time.Time) error {
 			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", name, err)
 		}
 	}
+
+	printRateComparison(mgr, names)
 	return nil
+}
+
+func sortedEnvNames(mgr *env.Manager) []string {
+	names := make([]string, 0, len(mgr.Cfg.Environments))
+	for name := range mgr.Cfg.Environments {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func showEnvUsage(name, envDir string, since time.Time) error {
@@ -100,25 +117,20 @@ func showEnvUsage(name, envDir string, since time.Time) error {
 	}
 
 	printUsageTable(data)
-	printRateLimits(data)
+	printRateStatus(envDir)
 	return nil
 }
 
 func printUsageTable(data *usage.EnvUsage) {
-	// Sort models for consistent output, skip zero-token entries
-	models := make([]string, 0, len(data.Models))
-	for m, tokens := range data.Models {
-		if tokens.Total() > 0 {
-			models = append(models, m)
-		}
+	models := activeModels(data)
+	if len(models) == 0 {
+		return
 	}
-	sort.Strings(models)
 
-	// Column widths
 	const (
-		modelW  = 30
-		tokenW  = 14
-		costW   = 12
+		modelW = 30
+		tokenW = 14
+		costW  = 12
 	)
 
 	header := fmt.Sprintf("%-*s %*s %*s %*s %*s %*s",
@@ -175,36 +187,15 @@ func printUsageTable(data *usage.EnvUsage) {
 	}
 }
 
-func printRateLimits(data *usage.EnvUsage) {
-	limits := usage.RateLimits()
-	usedTiers := map[string]bool{}
-	for model := range data.Models {
-		lower := strings.ToLower(model)
-		switch {
-		case strings.Contains(lower, "opus"):
-			usedTiers["Opus"] = true
-		case strings.Contains(lower, "sonnet"):
-			usedTiers["Sonnet"] = true
-		case strings.Contains(lower, "haiku"):
-			usedTiers["Haiku"] = true
+func activeModels(data *usage.EnvUsage) []string {
+	models := make([]string, 0, len(data.Models))
+	for m, tokens := range data.Models {
+		if tokens.Total() > 0 {
+			models = append(models, m)
 		}
 	}
-
-	if len(usedTiers) == 0 {
-		return
-	}
-
-	fmt.Println("\nRate Limits (published, per minute):")
-	for _, l := range limits {
-		if !usedTiers[l.Model] {
-			continue
-		}
-		fmt.Printf("  %-8s Requests: %s │ Input: %s tokens │ Output: %s tokens\n",
-			l.Model,
-			formatNum(uint64(l.RequestsPerMin)),
-			formatNum(uint64(l.InputTokensPerMin)),
-			formatNum(uint64(l.OutputTokensPerMin)))
-	}
+	sort.Strings(models)
+	return models
 }
 
 func hasUnknownModels(data *usage.EnvUsage) bool {
@@ -218,23 +209,122 @@ func hasUnknownModels(data *usage.EnvUsage) bool {
 	return false
 }
 
+func printRateStatus(envDir string) {
+	entries, err := usage.CollectRecentMessages(envDir, time.Duration(rateWindowMinutes)*time.Minute)
+	if err != nil || len(entries) == 0 {
+		return
+	}
+
+	statuses := usage.ComputeRateStatus(entries, rateWindowMinutes)
+	if len(statuses) == 0 {
+		return
+	}
+
+	fmt.Printf("\nRate Limit Status (last %dm):\n", rateWindowMinutes)
+	fmt.Printf("  %-10s %12s %12s %10s   %s\n", "", "Output Rate", "Limit", "Headroom", "Status")
+
+	for _, s := range statuses {
+		bar := renderBar(s.HeadroomPct)
+		statusStr := s.Status
+		if s.Status == usage.StatusCaution && s.MinutesToLimit > 0 {
+			statusStr = fmt.Sprintf("~%.0fm until throttled", s.MinutesToLimit)
+		}
+
+		fmt.Printf("  %-10s %10sK/m %10sK/m %9.0f%%   %s %s\n",
+			s.Tier,
+			formatNum(uint64(s.OutputRate/1000)),  //nolint:gosec // rate values are always small
+			formatNum(uint64(s.OutputLimit/1000)), //nolint:gosec // limit values are always small
+			s.HeadroomPct,
+			bar,
+			statusStr)
+	}
+}
+
+func printRateComparison(mgr *env.Manager, names []string) {
+	rates := collectEnvRates(mgr, names)
+	bestIdx := findBestProfile(rates)
+
+	fmt.Printf("\n\nProfile Comparison (last %dm):\n", rateWindowMinutes)
+	fmt.Printf("  %-15s %10s   %s\n", "Profile", "Headroom", "Status")
+	fmt.Printf("  %s\n", strings.Repeat("─", 50))
+
+	for i, r := range rates {
+		bar := renderBar(r.headroom)
+		suffix := ""
+		if i == bestIdx && len(rates) > 1 {
+			suffix = " ← best"
+		}
+		fmt.Printf("  %-15s %9.0f%%   %s %s%s\n",
+			r.name, r.headroom, bar, r.status, suffix)
+	}
+}
+
+type envRate struct {
+	name     string
+	headroom float64
+	status   string
+}
+
+func collectEnvRates(mgr *env.Manager, names []string) []envRate {
+	rates := make([]envRate, 0, len(names))
+	for _, name := range names {
+		r := envRate{name: name, headroom: 100, status: usage.StatusReady}
+		entries, err := usage.CollectRecentMessages(
+			mgr.Paths.EnvDir(name),
+			time.Duration(rateWindowMinutes)*time.Minute,
+		)
+		if err == nil && len(entries) > 0 {
+			for _, s := range usage.ComputeRateStatus(entries, rateWindowMinutes) {
+				if s.HeadroomPct < r.headroom {
+					r.headroom = s.HeadroomPct
+					r.status = s.Status
+				}
+			}
+		}
+		rates = append(rates, r)
+	}
+	return rates
+}
+
+func findBestProfile(rates []envRate) int {
+	bestIdx := 0
+	bestHeadroom := -1.0
+	for i, r := range rates {
+		if r.headroom > bestHeadroom {
+			bestHeadroom = r.headroom
+			bestIdx = i
+		}
+	}
+	return bestIdx
+}
+
+const barLen = 10
+
+func renderBar(headroomPct float64) string {
+	filled := int((100 - headroomPct) / 100 * barLen)
+	filled = max(0, min(filled, barLen))
+	return strings.Repeat("█", filled) + strings.Repeat("░", barLen-filled)
+}
+
+const commaGroupSize = 3
+
 // formatNum formats a number with comma separators.
 func formatNum(n uint64) string {
 	s := fmt.Sprintf("%d", n)
-	if len(s) <= 3 {
+	if len(s) <= commaGroupSize {
 		return s
 	}
 
 	var result strings.Builder
-	remainder := len(s) % 3
+	remainder := len(s) % commaGroupSize
 	if remainder > 0 {
 		result.WriteString(s[:remainder])
 	}
-	for i := remainder; i < len(s); i += 3 {
+	for i := remainder; i < len(s); i += commaGroupSize {
 		if result.Len() > 0 {
 			result.WriteByte(',')
 		}
-		result.WriteString(s[i : i+3])
+		result.WriteString(s[i : i+commaGroupSize])
 	}
 	return result.String()
 }
