@@ -106,9 +106,11 @@ type EnvUsage struct {
 }
 
 // jsonlEntry is the top-level structure of a session JSONL line.
+// Timestamp can be a number (unix millis) or an ISO 8601 string depending on
+// the Claude Code version that wrote the file.
 type jsonlEntry struct {
 	Type      string          `json:"type"`
-	Timestamp json.Number     `json:"timestamp"`
+	Timestamp json.RawMessage `json:"timestamp"`
 	Message   json.RawMessage `json:"message"`
 }
 
@@ -151,12 +153,8 @@ func ParseSessionFile(path string, since time.Time) (map[string]*ModelTokens, in
 		}
 
 		if !since.IsZero() {
-			ts, err := entry.Timestamp.Int64()
-			if err != nil {
-				continue
-			}
-			entryTime := time.UnixMilli(ts)
-			if entryTime.Before(since) {
+			entryTime, ok := parseTimestamp(entry.Timestamp)
+			if !ok || entryTime.Before(since) {
 				continue
 			}
 		}
@@ -253,6 +251,43 @@ func RateLimits() []RateLimitTier {
 		{Model: "Sonnet", RequestsPerMin: 1000, InputTokensPerMin: 2_000_000, OutputTokensPerMin: 100_000},
 		{Model: "Haiku", RequestsPerMin: 1000, InputTokensPerMin: 2_000_000, OutputTokensPerMin: 100_000},
 	}
+}
+
+// parseTimestamp handles both numeric (unix millis) and ISO 8601 string timestamps.
+func parseTimestamp(raw json.RawMessage) (time.Time, bool) {
+	if len(raw) == 0 {
+		return time.Time{}, false
+	}
+
+	// Try as a number (unix milliseconds)
+	if raw[0] != '"' {
+		var ms int64
+		if err := json.Unmarshal(raw, &ms); err == nil {
+			return time.UnixMilli(ms), true
+		}
+		return time.Time{}, false
+	}
+
+	// Try as a string (ISO 8601 or numeric string)
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return time.Time{}, false
+	}
+
+	// Some files store timestamps as quoted numbers (e.g., "1700000000000")
+	var ms int64
+	if _, err := fmt.Sscanf(s, "%d", &ms); err == nil && ms > 1_000_000_000_000 {
+		return time.UnixMilli(ms), true
+	}
+
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		t, err = time.Parse("2006-01-02T15:04:05.000Z", s)
+		if err != nil {
+			return time.Time{}, false
+		}
+	}
+	return t, true
 }
 
 // ParseSince parses a --since value into a time.Time.

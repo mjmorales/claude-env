@@ -105,10 +105,12 @@ func showEnvUsage(name, envDir string, since time.Time) error {
 }
 
 func printUsageTable(data *usage.EnvUsage) {
-	// Sort models for consistent output
+	// Sort models for consistent output, skip zero-token entries
 	models := make([]string, 0, len(data.Models))
-	for m := range data.Models {
-		models = append(models, m)
+	for m, tokens := range data.Models {
+		if tokens.Total() > 0 {
+			models = append(models, m)
+		}
 	}
 	sort.Strings(models)
 
@@ -206,9 +208,11 @@ func printRateLimits(data *usage.EnvUsage) {
 }
 
 func hasUnknownModels(data *usage.EnvUsage) bool {
-	for model := range data.Models {
-		if _, known := usage.PricingForModel(model); !known {
-			return true
+	for model, tokens := range data.Models {
+		if tokens.Total() > 0 {
+			if _, known := usage.PricingForModel(model); !known {
+				return true
+			}
 		}
 	}
 	return false

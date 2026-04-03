@@ -370,6 +370,54 @@ func TestParseSinceDays(t *testing.T) {
 	}
 }
 
+func TestParseSessionFileISOTimestamp(t *testing.T) {
+	dir := t.TempDir()
+
+	path := writeJSONL(t, dir,
+		`{"type":"assistant","timestamp":"2026-04-02T15:08:31.768Z","message":{"model":"claude-opus-4-6","role":"assistant","content":[],"usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":5}}}`,
+	)
+
+	models, messages, err := ParseSessionFile(path, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messages != 1 {
+		t.Errorf("messages = %d, want 1", messages)
+	}
+	opus := models["claude-opus-4-6"]
+	if opus == nil {
+		t.Fatal("no opus entry with ISO timestamp")
+	}
+	if opus.Input != 100 {
+		t.Errorf("input = %d, want 100", opus.Input)
+	}
+}
+
+func TestParseSessionFileISOTimestampSinceFilter(t *testing.T) {
+	dir := t.TempDir()
+
+	path := writeJSONL(t, dir,
+		`{"type":"assistant","timestamp":"2026-04-01T10:00:00.000Z","message":{"model":"claude-opus-4-6","role":"assistant","content":[],"usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`,
+		`{"type":"assistant","timestamp":"2026-04-03T10:00:00.000Z","message":{"model":"claude-opus-4-6","role":"assistant","content":[],"usage":{"input_tokens":200,"output_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`,
+	)
+
+	since := time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC)
+	models, messages, err := ParseSessionFile(path, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messages != 1 {
+		t.Errorf("messages = %d, want 1 (only after cutoff)", messages)
+	}
+	opus := models["claude-opus-4-6"]
+	if opus == nil {
+		t.Fatal("no opus")
+	}
+	if opus.Input != 200 {
+		t.Errorf("input = %d, want 200 (only second message)", opus.Input)
+	}
+}
+
 func TestRateLimits(t *testing.T) {
 	limits := RateLimits()
 	if len(limits) != 3 {
