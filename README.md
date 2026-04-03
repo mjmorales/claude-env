@@ -115,6 +115,42 @@ eval "$(claude-env completion bash)"
 
 **Important:** Before running `claude-env login` for a new environment, make sure you are signed into the correct account at [claude.ai](https://claude.ai/new). The OAuth flow in the browser will attach to whichever account is currently active. If you need to switch accounts, sign out at claude.ai first, then sign in with the desired account before running `login`.
 
+### Usage & Monitoring
+
+| Command | Description |
+|---------|-------------|
+| `claude-env usage [name]` | Show token consumption, estimated costs, and rate limit reference for the active or named environment. Parses session data from `~/.claude-envs/<name>/projects/`. |
+| `claude-env usage --all` | Show usage stats for every registered environment. |
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--all` | `false` | Show usage for all environments instead of just the active one. |
+| `--since <value>` | (all time) | Filter to a time window. Accepts durations (`24h`, `7d`, `30d`) or dates (`2026-04-01`). |
+
+**Example output:**
+
+```
+Environment: default
+Period: all time
+
+Model                           Input       Output    Cache Write   Cache Read       Cost
+────────────────────────────────────────────────────────────────────────────────────────────
+claude-haiku-4-5-20251001       6,781       63,559      1,391,252   17,314,967     $3.7951
+claude-opus-4-6                 6,088      327,072      4,823,052  119,211,100   $293.8706
+────────────────────────────────────────────────────────────────────────────────────────────
+Total                          12,869      390,631      6,214,304  136,526,067   $297.6657
+
+Sessions: 24 │ Messages: 1722
+
+Rate Limits (published, per minute):
+  Opus     Requests: 1,000 │ Input: 2,000,000 tokens │ Output: 100,000 tokens
+  Haiku    Requests: 1,000 │ Input: 2,000,000 tokens │ Output: 100,000 tokens
+```
+
+Costs are estimates based on published per-token pricing (Opus $15/$75, Sonnet $15/$75, Haiku $1/$5 per million input/output tokens). Unknown models use Sonnet pricing as a fallback, marked with `*`.
+
 ### Utilities
 
 | Command | Description |
