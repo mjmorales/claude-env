@@ -45,7 +45,9 @@ var sharedAddCmd = &cobra.Command{
 			return fmt.Errorf("reconcile symlinks: %w", err)
 		}
 
-		fmt.Fprintf(os.Stderr, "Added %q to %q shared resources\n", resource, envName)
+		// Show the resolved pool-relative path, not the original input.
+		added := e.Shared[len(e.Shared)-1]
+		fmt.Fprintf(os.Stderr, "Added %q to %q shared resources\n", added, envName)
 		return nil
 	},
 }

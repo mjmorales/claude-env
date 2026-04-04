@@ -255,23 +255,120 @@ type EnvInfo struct {
 	Shared []string
 }
 
-// SharedAdd adds a resource path to an environment's shared list, saves config,
-// and reconciles symlinks.
+// SharedAdd adds a resource to an environment's shared list. If the resource is
+// an absolute path, it is copied into the pool automatically. The pool-relative
+// path is derived from the last two path components (e.g. skills/humanify).
 func (m *Manager) SharedAdd(name, resource string) error {
 	e, exists := m.Cfg.Environments[name]
 	if !exists {
 		return fmt.Errorf("environment %q not found", name)
 	}
 
-	if slices.Contains(e.Shared, resource) {
-		return fmt.Errorf("resource %q already shared in environment %q", resource, name)
+	relPath, err := m.ensureInPool(resource)
+	if err != nil {
+		return err
 	}
 
-	e.Shared = append(e.Shared, resource)
+	if slices.Contains(e.Shared, relPath) {
+		return fmt.Errorf("resource %q already shared in environment %q", relPath, name)
+	}
+
+	e.Shared = append(e.Shared, relPath)
 	m.Cfg.Environments[name] = e
 
 	if err := config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs); err != nil {
 		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+// ensureInPool resolves a resource path to a pool-relative path, copying the
+// resource into the pool if it lives outside it. Returns the pool-relative path.
+func (m *Manager) ensureInPool(resource string) (string, error) {
+	// Already a relative path inside the pool — just validate it exists.
+	if !filepath.IsAbs(resource) {
+		poolPath := filepath.Join(m.Paths.PoolDir, resource)
+		if _, err := m.Fs.Stat(poolPath); err != nil {
+			return "", fmt.Errorf("resource %q not found in pool (%s)", resource, m.Paths.PoolDir)
+		}
+		return resource, nil
+	}
+
+	// Absolute path — verify source exists.
+	srcInfo, err := m.Fs.Stat(resource)
+	if err != nil {
+		return "", fmt.Errorf("source path does not exist: %s", resource)
+	}
+
+	// Derive pool-relative path from last two components (e.g. skills/humanify).
+	relPath := poolRelPath(resource)
+	dst := filepath.Join(m.Paths.PoolDir, relPath)
+
+	// If already in the pool at the expected location, skip copy.
+	if _, err := m.Fs.Stat(dst); err == nil {
+		return relPath, nil
+	}
+
+	// Copy source into pool.
+	if err := m.Fs.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return "", fmt.Errorf("create pool directory: %w", err)
+	}
+
+	if err := m.copyResource(resource, dst, srcInfo); err != nil {
+		return "", err
+	}
+
+	fmt.Fprintf(os.Stderr, "Copied %s → %s\n", resource, dst)
+	return relPath, nil
+}
+
+// poolRelPath derives a pool-relative path from the last two components of an
+// absolute path (e.g. /home/user/.claude/skills/humanify → skills/humanify).
+func poolRelPath(absPath string) string {
+	dir, base := filepath.Split(filepath.Clean(absPath))
+	parent := filepath.Base(filepath.Clean(dir))
+	return filepath.Join(parent, base)
+}
+
+// copyResource copies a file or directory into the pool.
+func (m *Manager) copyResource(src, dst string, info os.FileInfo) error {
+	if info.IsDir() {
+		return m.copyDir(src, dst)
+	}
+	data, err := m.Fs.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("read source: %w", err)
+	}
+	if err := m.Fs.WriteFile(dst, data, 0o644); err != nil {
+		return fmt.Errorf("write to pool: %w", err)
+	}
+	return nil
+}
+
+// copyDir recursively copies a directory tree.
+func (m *Manager) copyDir(src, dst string) error {
+	if err := filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return fmt.Errorf("rel path: %w", err)
+		}
+		target := filepath.Join(dst, rel)
+
+		if d.IsDir() {
+			return m.Fs.MkdirAll(target, 0o755)
+		}
+
+		data, err := m.Fs.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", rel, err)
+		}
+		return m.Fs.WriteFile(target, data, 0o644)
+	}); err != nil {
+		return fmt.Errorf("walk source directory: %w", err)
 	}
 	return nil
 }

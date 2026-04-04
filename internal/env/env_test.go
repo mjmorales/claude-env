@@ -257,6 +257,15 @@ func TestSharedAdd(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Create a resource in the pool so validation passes.
+	poolResource := filepath.Join(paths.PoolDir, "agents", "reviewer.md")
+	if err := os.MkdirAll(filepath.Dir(poolResource), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(poolResource, []byte("# Reviewer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := mgr.SharedAdd("default", "agents/reviewer.md"); err != nil {
 		t.Fatalf("SharedAdd failed: %v", err)
 	}
@@ -269,6 +278,75 @@ func TestSharedAdd(t *testing.T) {
 	// Adding duplicate should error.
 	if err := mgr.SharedAdd("default", "agents/reviewer.md"); err == nil {
 		t.Fatal("expected error adding duplicate shared resource")
+	}
+}
+
+func TestSharedAddCopiesAbsolutePathToPool(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := env.New(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a source file outside the pool.
+	srcDir := filepath.Join(t.TempDir(), "skills", "my-skill")
+	if err := os.MkdirAll(srcDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	srcFile := filepath.Join(srcDir, "SKILL.md")
+	if err := os.WriteFile(srcFile, []byte("# My Skill"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add using absolute path — should copy to pool as skills/my-skill.
+	if err := mgr.SharedAdd("default", srcDir); err != nil {
+		t.Fatalf("SharedAdd with absolute path failed: %v", err)
+	}
+
+	// Verify it was registered with the relative path.
+	e := mgr.Cfg.Environments["default"]
+	if len(e.Shared) != 1 || e.Shared[0] != "skills/my-skill" {
+		t.Fatalf("shared = %v, want [skills/my-skill]", e.Shared)
+	}
+
+	// Verify the file was copied into the pool.
+	poolFile := filepath.Join(paths.PoolDir, "skills", "my-skill", "SKILL.md")
+	data, err := os.ReadFile(filepath.Clean(poolFile))
+	if err != nil {
+		t.Fatalf("expected pool file to exist: %v", err)
+	}
+	if string(data) != "# My Skill" {
+		t.Fatalf("pool file content = %q, want '# My Skill'", data)
+	}
+}
+
+func TestSharedAddRejectsAbsolutePathNotFound(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := env.New(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mgr.SharedAdd("default", "/nonexistent/path/agent.md"); err == nil {
+		t.Fatal("expected error for nonexistent absolute path")
+	}
+}
+
+func TestSharedAddRejectsMissingPool(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := env.New(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mgr.SharedAdd("default", "agents/nonexistent.md"); err == nil {
+		t.Fatal("expected error for resource not in pool")
 	}
 }
 
