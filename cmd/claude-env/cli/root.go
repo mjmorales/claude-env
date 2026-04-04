@@ -68,3 +68,17 @@ func mustCwd() string {
 	}
 	return dir
 }
+
+// resolveEnvFlag returns the environment name from --env flag, falling back to
+// the current active environment.
+func resolveEnvFlag(mgr *env.Manager, cmd *cobra.Command) (string, error) {
+	envFlag, err := cmd.Flags().GetString("env")
+	if err == nil && envFlag != "" {
+		return envFlag, nil
+	}
+	name, _, err := mgr.Current(mustCwd())
+	if err != nil {
+		return "", fmt.Errorf("resolve current environment: %w", err)
+	}
+	return name, nil
+}

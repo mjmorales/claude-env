@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 
 	"github.com/mjmorales/claude-env/internal/config"
 	"github.com/mjmorales/claude-env/internal/fsutil"
@@ -252,6 +253,87 @@ type EnvInfo struct {
 	Name   string
 	Active bool
 	Shared []string
+}
+
+// SharedAdd adds a resource path to an environment's shared list, saves config,
+// and reconciles symlinks.
+func (m *Manager) SharedAdd(name, resource string) error {
+	e, exists := m.Cfg.Environments[name]
+	if !exists {
+		return fmt.Errorf("environment %q not found", name)
+	}
+
+	if slices.Contains(e.Shared, resource) {
+		return fmt.Errorf("resource %q already shared in environment %q", resource, name)
+	}
+
+	e.Shared = append(e.Shared, resource)
+	m.Cfg.Environments[name] = e
+
+	if err := config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+// SharedRemove removes a resource path from an environment's shared list, saves
+// config, and reconciles symlinks.
+func (m *Manager) SharedRemove(name, resource string) error {
+	e, exists := m.Cfg.Environments[name]
+	if !exists {
+		return fmt.Errorf("environment %q not found", name)
+	}
+
+	idx := -1
+	for i, s := range e.Shared {
+		if s == resource {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return fmt.Errorf("resource %q not found in environment %q", resource, name)
+	}
+
+	e.Shared = append(e.Shared[:idx], e.Shared[idx+1:]...)
+	m.Cfg.Environments[name] = e
+
+	if err := config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+// SetOverride sets the settings_override path for an environment.
+func (m *Manager) SetOverride(name, path string) error {
+	e, exists := m.Cfg.Environments[name]
+	if !exists {
+		return fmt.Errorf("environment %q not found", name)
+	}
+
+	e.SettingsOverride = path
+	m.Cfg.Environments[name] = e
+
+	if err := config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+// ClearOverride removes the settings_override for an environment.
+func (m *Manager) ClearOverride(name string) error {
+	e, exists := m.Cfg.Environments[name]
+	if !exists {
+		return fmt.Errorf("environment %q not found", name)
+	}
+
+	e.SettingsOverride = ""
+	m.Cfg.Environments[name] = e
+
+	if err := config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
 }
 
 // patchClaudeConfig ensures .claude.json in envDir has the flags Claude Code

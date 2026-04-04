@@ -247,3 +247,124 @@ func TestConfigDir(t *testing.T) {
 		t.Fatalf("ConfigDir = %q, want %q", got, want)
 	}
 }
+
+func TestSharedAdd(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := env.New(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mgr.SharedAdd("default", "agents/reviewer.md"); err != nil {
+		t.Fatalf("SharedAdd failed: %v", err)
+	}
+
+	e := mgr.Cfg.Environments["default"]
+	if len(e.Shared) != 1 || e.Shared[0] != "agents/reviewer.md" {
+		t.Fatalf("shared = %v, want [agents/reviewer.md]", e.Shared)
+	}
+
+	// Adding duplicate should error.
+	if err := mgr.SharedAdd("default", "agents/reviewer.md"); err == nil {
+		t.Fatal("expected error adding duplicate shared resource")
+	}
+}
+
+func TestSharedRemove(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+
+	cfg := config.Config{
+		Environments: map[string]config.Environment{
+			"default": {Shared: []string{"agents/reviewer.md", "commands/deploy.md"}},
+		},
+		Global: "default",
+	}
+	mgr := env.New(paths, cfg, fs)
+
+	// Create dirs so Save works.
+	if err := os.MkdirAll(paths.EnvsDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mgr.SharedRemove("default", "agents/reviewer.md"); err != nil {
+		t.Fatalf("SharedRemove failed: %v", err)
+	}
+
+	e := mgr.Cfg.Environments["default"]
+	if len(e.Shared) != 1 || e.Shared[0] != "commands/deploy.md" {
+		t.Fatalf("shared = %v, want [commands/deploy.md]", e.Shared)
+	}
+
+	// Removing nonexistent should error.
+	if err := mgr.SharedRemove("default", "nonexistent"); err == nil {
+		t.Fatal("expected error removing nonexistent shared resource")
+	}
+}
+
+func TestSharedAddNonexistentEnv(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := env.New(paths, cfg, fs)
+
+	if err := mgr.SharedAdd("ghost", "agents/foo.md"); err == nil {
+		t.Fatal("expected error for nonexistent environment")
+	}
+}
+
+func TestSetOverride(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := env.New(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mgr.SetOverride("default", "/tmp/settings.json"); err != nil {
+		t.Fatalf("SetOverride failed: %v", err)
+	}
+
+	e := mgr.Cfg.Environments["default"]
+	if e.SettingsOverride != "/tmp/settings.json" {
+		t.Fatalf("settings_override = %q, want /tmp/settings.json", e.SettingsOverride)
+	}
+}
+
+func TestClearOverride(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+
+	cfg := config.Config{
+		Environments: map[string]config.Environment{
+			"default": {SettingsOverride: "/tmp/settings.json"},
+		},
+		Global: "default",
+	}
+	mgr := env.New(paths, cfg, fs)
+
+	if err := os.MkdirAll(paths.EnvsDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mgr.ClearOverride("default"); err != nil {
+		t.Fatalf("ClearOverride failed: %v", err)
+	}
+
+	e := mgr.Cfg.Environments["default"]
+	if e.SettingsOverride != "" {
+		t.Fatalf("settings_override = %q, want empty", e.SettingsOverride)
+	}
+}
+
+func TestClearOverrideNonexistentEnv(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := env.New(paths, cfg, fs)
+
+	if err := mgr.ClearOverride("ghost"); err == nil {
+		t.Fatal("expected error for nonexistent environment")
+	}
+}
