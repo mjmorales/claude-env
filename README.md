@@ -151,6 +151,25 @@ Rate Limits (published, per minute):
 
 Costs are estimates based on published per-token pricing (Opus $15/$75, Sonnet $15/$75, Haiku $1/$5 per million input/output tokens). Unknown models use Sonnet pricing as a fallback, marked with `*`.
 
+### Configuration
+
+| Command | Description |
+|---------|-------------|
+| `claude-env config show` | Print the full `config.toml` contents. |
+| `claude-env config path` | Print the config file path. |
+| `claude-env config set-override <path> [--env name]` | Set `settings_override` for an environment (defaults to current). |
+| `claude-env config clear-override [--env name]` | Clear `settings_override` for an environment (defaults to current). |
+
+### Shared Resources
+
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `claude-env shared add <path> [--env name]` | | Add a pool resource to an environment's shared list and reconcile symlinks. Path is relative to the pool directory (e.g. `agents/reviewer.md`). |
+| `claude-env shared remove <path> [--env name]` | `rm` | Remove a shared resource from an environment and reconcile symlinks. |
+| `claude-env shared list [--env name]` | `ls` | List shared resources declared for an environment. |
+
+All `--env` flags default to the current active environment.
+
 ### Utilities
 
 | Command | Description |
@@ -185,7 +204,15 @@ Place shared resources inside `~/.claude-envs/pool/`:
       deploy.md
 ```
 
-Declare which resources an environment shares in `~/.claude-envs/config.toml`:
+Then use the CLI to declare which resources an environment shares:
+
+```sh
+claude-env shared add agents/my-agent.md --env work
+claude-env shared add commands/deploy.md --env work
+claude-env shared add commands/deploy.md --env personal
+```
+
+This updates `config.toml` and reconciles symlinks automatically. You can also edit `config.toml` directly:
 
 ```toml
 global = "work"
