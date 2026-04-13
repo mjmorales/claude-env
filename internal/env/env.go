@@ -2,6 +2,7 @@
 package env
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/mjmorales/claude-env/internal/config"
 	"github.com/mjmorales/claude-env/internal/fsutil"
@@ -105,6 +107,11 @@ func (m *Manager) Use(name string) error {
 	if err := config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
+
+	if _, err := m.SyncMarketplacePaths(envDir); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to sync marketplace paths: %v\n", err)
+	}
+
 	return nil
 }
 
@@ -496,6 +503,95 @@ func (m *Manager) copyBootstrapFiles(envDir string) {
 		//nolint:errcheck
 		_ = m.Fs.WriteFile(dst, data, f.perm)
 	}
+}
+
+const marketplacesSubpath = "plugins" + string(filepath.Separator) + "marketplaces" + string(filepath.Separator)
+
+// PathRewrite describes a single installLocation change.
+type PathRewrite struct {
+	Plugin  string
+	OldPath string
+	NewPath string
+}
+
+// SyncMarketplacePaths updates installLocation entries in known_marketplaces.json
+// so they point to the given environment's plugin directory. Returns the list of
+// rewrites applied (empty if nothing changed). This is needed because the file is
+// pooled (shared via symlink) but Claude Code's validator resolves symlinks and
+// does a prefix match against the active env's real path.
+func (m *Manager) SyncMarketplacePaths(envDir string) ([]PathRewrite, error) {
+	kmPath := filepath.Join(m.Paths.PoolDir, "plugins", "known_marketplaces.json")
+	data, err := m.Fs.ReadFile(kmPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read known_marketplaces.json: %w", err)
+	}
+
+	var marketplaces map[string]json.RawMessage
+	if err := json.Unmarshal(data, &marketplaces); err != nil {
+		return nil, fmt.Errorf("parse known_marketplaces.json: %w", err)
+	}
+
+	targetPrefix := filepath.Join(envDir, "plugins", "marketplaces")
+	result := data
+	var rewrites []PathRewrite
+
+	for key, raw := range marketplaces {
+		if rw, replaced := rewriteEntry(key, raw, targetPrefix, result); replaced {
+			result = rw.data
+			rewrites = append(rewrites, rw.PathRewrite)
+		}
+	}
+
+	if len(rewrites) == 0 {
+		return nil, nil
+	}
+
+	if err := m.Fs.WriteFile(kmPath, result, 0o644); err != nil {
+		return nil, fmt.Errorf("write known_marketplaces.json: %w", err)
+	}
+	return rewrites, nil
+}
+
+type rewriteResult struct {
+	PathRewrite
+	data []byte
+}
+
+// rewriteEntry checks a single marketplace entry and returns a rewrite if the
+// installLocation needs updating. Uses bytes.Replace on data to preserve JSON ordering.
+func rewriteEntry(key string, raw json.RawMessage, targetPrefix string, data []byte) (rewriteResult, bool) {
+	var entry map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		return rewriteResult{}, false
+	}
+
+	locRaw, ok := entry["installLocation"]
+	if !ok {
+		return rewriteResult{}, false
+	}
+	var loc string
+	if err := json.Unmarshal(locRaw, &loc); err != nil {
+		return rewriteResult{}, false
+	}
+
+	idx := strings.Index(loc, marketplacesSubpath)
+	if idx < 0 {
+		return rewriteResult{}, false
+	}
+
+	newLoc := filepath.Join(targetPrefix, loc[idx+len(marketplacesSubpath):])
+	if newLoc == loc {
+		return rewriteResult{}, false
+	}
+
+	replaced := bytes.Replace(data, []byte(`"`+loc+`"`), []byte(`"`+newLoc+`"`), 1)
+	return rewriteResult{
+		PathRewrite: PathRewrite{Plugin: key, OldPath: loc, NewPath: newLoc},
+		data:        replaced,
+	}, true
 }
 
 func trimNewline(s string) string {

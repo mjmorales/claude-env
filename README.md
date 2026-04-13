@@ -102,7 +102,7 @@ eval "$(claude-env completion bash)"
 
 | Command | Alias | Description |
 |---------|-------|-------------|
-| `claude-env use <name>` | `global` | Set the global active environment. Persisted to `config.toml`. All new shells pick this up. |
+| `claude-env use <name>` | `global` | Set the global active environment. Persisted to `config.toml`. All new shells pick this up. Automatically syncs marketplace plugin paths (see `sync`). |
 | `claude-env local <name>` | | Pin an environment to the current directory by writing a `.claude-env` file. Overrides the global setting for any shell in this directory tree. |
 | `claude-env current` | | Print the active environment name and whether it is resolved from a local pin or the global setting. |
 
@@ -169,6 +169,14 @@ Costs are estimates based on published per-token pricing (Opus $15/$75, Sonnet $
 | `claude-env shared list [--env name]` | `ls` | List shared resources declared for an environment. |
 
 All `--env` flags default to the current active environment.
+
+### Sync
+
+| Command | Description |
+|---------|-------------|
+| `claude-env sync [--env name]` | Rewrite `installLocation` entries in `known_marketplaces.json` to point to the target environment's plugin directory. Fixes path mismatches caused by installing or updating plugins from a different environment. Use `--dry-run` to preview changes. |
+
+This runs automatically on `claude-env use`, but can be invoked manually to fix paths without switching environments.
 
 ### Utilities
 

@@ -3,6 +3,7 @@ package env_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -444,5 +445,77 @@ func TestClearOverrideNonexistentEnv(t *testing.T) {
 
 	if err := mgr.ClearOverride("ghost"); err == nil {
 		t.Fatal("expected error for nonexistent environment")
+	}
+}
+
+//nolint:gosec // test file uses temp dirs with relaxed permissions
+func writeTestMarketplaces(t *testing.T, poolDir, defaultEnvDir string) string {
+	t.Helper()
+	kmDir := filepath.Join(poolDir, "plugins")
+	if err := os.MkdirAll(kmDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	defaultPrefix := filepath.Join(defaultEnvDir, "plugins", "marketplaces")
+	km := map[string]any{
+		"prove": map[string]any{
+			"source":          map[string]any{"source": "github", "repo": "mjmorales/claude-prove"},
+			"installLocation": filepath.Join(defaultPrefix, "prove"),
+			"lastUpdated":     "2026-04-06T16:57:08.995Z",
+		},
+		"keel": map[string]any{
+			"source":          map[string]any{"source": "directory", "path": "/external/.keel"},
+			"installLocation": "/external/.keel",
+			"lastUpdated":     "2026-04-07T00:38:56.568Z",
+		},
+	}
+	data, err := json.MarshalIndent(km, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kmPath := filepath.Join(kmDir, "known_marketplaces.json")
+	if err := os.WriteFile(kmPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return kmPath
+}
+
+func TestUseRewritesMarketplacePaths(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := env.New(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Add("work"); err != nil {
+		t.Fatal(err)
+	}
+
+	kmPath := writeTestMarketplaces(t, paths.PoolDir, paths.EnvDir("default"))
+
+	if err := mgr.Use("work"); err != nil {
+		t.Fatalf("Use failed: %v", err)
+	}
+
+	updated, err := os.ReadFile(kmPath) //#nosec G304
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var result map[string]map[string]any
+	if err := json.Unmarshal(updated, &result); err != nil {
+		t.Fatal(err)
+	}
+
+	wantLoc := filepath.Join(paths.EnvDir("work"), "plugins", "marketplaces", "prove")
+	gotLoc, ok := result["prove"]["installLocation"].(string)
+	if !ok || gotLoc != wantLoc {
+		t.Fatalf("prove installLocation = %q, want %q", gotLoc, wantLoc)
+	}
+
+	keelLoc, ok := result["keel"]["installLocation"].(string)
+	if !ok || keelLoc != "/external/.keel" {
+		t.Fatalf("keel installLocation = %q, want /external/.keel", keelLoc)
 	}
 }
