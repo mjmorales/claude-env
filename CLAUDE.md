@@ -1,31 +1,49 @@
 <!-- prove:managed:start -->
 # claude-multi-sub
 
-<!-- prove:plugin-version:0.29.0 -->
-**Prove plugin v0.29.0** — if the installed plugin version (`cat /Users/manuelmorales/.claude/plugins/marketplaces/prove/.claude-plugin/plugin.json | grep version`) does not match v0.29.0, run `/prove:update` to sync.
+<!-- prove:plugin-version:0.30.0 -->
+**Prove plugin v0.30.0** — if the installed plugin version (`cat /Users/manuelmorales/.claude-envs/default/plugins/cache/prove/prove/0.30.0/.claude-plugin/plugin.json | grep version`) does not match v0.30.0, run `/prove:update` to sync.
 
+Go (go)
+
+## Structure
+
+- `cmd/` — Go CLI entry points
+- `internal/` — Internal packages
+- `pkg/` — Go packages
+
+## Conventions
+
+- File naming: snake_case
+- Test files: *_test.ext (suffix)
+
+## Tool Directives
+
+### acb
+
+Before every `git commit` on a feature branch, write an intent manifest via `python3 -m tools.acb save-manifest` describing what changed and why. The PreToolUse hook blocks commits without a manifest. After committing, manifests are assembled into a reviewable ACB document via `/prove:review`.
 
 ## References
 
 ### Creator Conventions
 
-@/Users/manuelmorales/.claude/plugins/marketplaces/prove/references/creator-conventions.md
+@/Users/manuelmorales/.claude-envs/default/plugins/cache/prove/prove/0.30.0/references/creator-conventions.md
 
 ### Interaction Patterns
 
-@/Users/manuelmorales/.claude/plugins/marketplaces/prove/references/interaction-patterns.md
+@/Users/manuelmorales/.claude-envs/default/plugins/cache/prove/prove/0.30.0/references/interaction-patterns.md
 
 ### LLM Coding Standards
 
-@/Users/manuelmorales/.claude/plugins/marketplaces/prove/references/llm-coding-standards.md
+@/Users/manuelmorales/.claude-envs/default/plugins/cache/prove/prove/0.30.0/references/llm-coding-standards.md
 
 ### Prompt Engineering Guide
 
-@/Users/manuelmorales/.claude/plugins/marketplaces/prove/references/prompt-engineering-guide.md
+@/Users/manuelmorales/.claude-envs/default/plugins/cache/prove/prove/0.30.0/references/prompt-engineering-guide.md
 
 ### Validation Config
 
-@/Users/manuelmorales/.claude/plugins/marketplaces/prove/references/validation-config.md
+@/Users/manuelmorales/.claude-envs/default/plugins/cache/prove/prove/0.30.0/references/validation-config.md
 
 ## Prove Commands
 
