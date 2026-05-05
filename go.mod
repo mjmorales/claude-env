@@ -3,7 +3,7 @@ module github.com/mjmorales/claude-env
 go 1.25.7
 
 require (
-	github.com/pelletier/go-toml/v2 v2.3.0
+	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/spf13/afero v1.15.0
 	github.com/spf13/cobra v1.10.2
 )
