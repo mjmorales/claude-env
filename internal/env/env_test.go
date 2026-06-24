@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/mjmorales/claude-env/internal/config"
-	"github.com/mjmorales/claude-env/internal/env"
 	"github.com/mjmorales/claude-env/internal/fsutil"
 )
 
@@ -38,7 +37,7 @@ func TestInitCreatesEnvDir(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	if err := mgr.Init(); err != nil {
 		t.Fatalf("Init failed: %v", err)
@@ -64,21 +63,21 @@ func TestInitCreatesEnvDir(t *testing.T) {
 func TestInitAdoptsExistingCredentials(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
-	// Create fake existing .claude.json.
-	original := []byte(`{"oauthAccount": {"token": "abc123"}}`)
-	if err := os.WriteFile(filepath.Join(paths.ClaudeDir, ".claude.json"), original, 0o600); err != nil {
+	// An existing default Claude Code login is a .credentials.json under ~/.claude.
+	original := []byte(`{"claudeAiOauth":{"accessToken":"sk-ant-oat01-x","subscriptionType":"max"}}`)
+	if err := os.WriteFile(filepath.Join(paths.ClaudeDir, ".credentials.json"), original, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	if err := mgr.Init(); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	// Credentials should be copied to the env dir.
-	data, err := os.ReadFile(filepath.Join(paths.EnvDir("default"), ".claude.json"))
+	// The token should be adopted into the default env's credential file.
+	data, err := os.ReadFile(filepath.Join(paths.EnvDir("default"), ".credentials.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +90,7 @@ func TestInitAlreadyInitialized(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	if err := mgr.Init(); err != nil {
 		t.Fatal(err)
@@ -105,7 +104,7 @@ func TestAddAndUse(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	if err := mgr.Init(); err != nil {
 		t.Fatal(err)
@@ -138,7 +137,7 @@ func TestCurrentResolvesLocal(t *testing.T) {
 			"work":    {},
 		},
 	}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	projectDir := filepath.Join(t.TempDir(), "myproject")
 	//nolint:gosec // test directory
@@ -169,7 +168,7 @@ func TestCurrentFallsBackToGlobal(t *testing.T) {
 		Global:       "default",
 		Environments: map[string]config.Environment{"default": {}},
 	}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	name, source, err := mgr.Current(t.TempDir())
 	if err != nil {
@@ -184,7 +183,7 @@ func TestRemove(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	if err := mgr.Init(); err != nil {
 		t.Fatal(err)
@@ -212,7 +211,7 @@ func TestAddDuplicate(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	if err := mgr.Init(); err != nil {
 		t.Fatal(err)
@@ -226,7 +225,7 @@ func TestUseNonexistent(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	if err := mgr.Use("nonexistent"); err == nil {
 		t.Fatal("expected error using nonexistent environment")
@@ -240,7 +239,7 @@ func TestConfigDir(t *testing.T) {
 		Global:       "myenv",
 		Environments: map[string]config.Environment{"myenv": {}},
 	}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	got := mgr.ConfigDir("myenv")
 	want := filepath.Join(paths.EnvsDir, "myenv")
@@ -253,7 +252,7 @@ func TestSharedAdd(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 	if err := mgr.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +285,7 @@ func TestSharedAddCopiesAbsolutePathToPool(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 	if err := mgr.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +326,7 @@ func TestSharedAddRejectsAbsolutePathNotFound(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 	if err := mgr.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +340,7 @@ func TestSharedAddRejectsMissingPool(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 	if err := mgr.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +359,7 @@ func TestSharedRemove(t *testing.T) {
 		},
 		Global: "default",
 	}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	// Create dirs so Save works.
 	if err := os.MkdirAll(paths.EnvsDir, 0o750); err != nil {
@@ -386,7 +385,7 @@ func TestSharedAddNonexistentEnv(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	if err := mgr.SharedAdd("ghost", "agents/foo.md"); err == nil {
 		t.Fatal("expected error for nonexistent environment")
@@ -397,7 +396,7 @@ func TestSetOverride(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 	if err := mgr.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +420,7 @@ func TestClearOverride(t *testing.T) {
 		},
 		Global: "default",
 	}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	if err := os.MkdirAll(paths.EnvsDir, 0o750); err != nil {
 		t.Fatal(err)
@@ -441,7 +440,7 @@ func TestClearOverrideNonexistentEnv(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 
 	if err := mgr.ClearOverride("ghost"); err == nil {
 		t.Fatal("expected error for nonexistent environment")
@@ -484,7 +483,7 @@ func TestUseRewritesMarketplacePaths(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 
 	cfg := config.Config{Environments: make(map[string]config.Environment)}
-	mgr := env.New(paths, cfg, fs)
+	mgr := newTestManager(paths, cfg, fs)
 	if err := mgr.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -517,5 +516,206 @@ func TestUseRewritesMarketplacePaths(t *testing.T) {
 	keelLoc, ok := result["keel"]["installLocation"].(string)
 	if !ok || keelLoc != "/external/.keel" {
 		t.Fatalf("keel installLocation = %q, want /external/.keel", keelLoc)
+	}
+}
+
+// --- v2 OAuth credential flow tests ---
+
+const validBlob = `{"claudeAiOauth":{"accessToken":"sk-ant-oat01-tok","refreshToken":"sk-ant-ort01-ref","subscriptionType":"max","expiresAt":1700000300000}}`
+
+func credPath(paths config.Paths, name string) string {
+	return filepath.Join(paths.EnvDir(name), ".credentials.json")
+}
+
+func TestLoginCapturesKeychainIntoFile(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := newTestManager(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate macOS: `claude auth login` writes the token to the keychain.
+	kc := newFakeKeychain(true)
+	mgr.Keychain = kc
+	mgr.Claude = &fakeClaude{loginFunc: func(dir string) error {
+		kc.entries[dir] = []byte(validBlob)
+		return nil
+	}}
+
+	if err := mgr.Login("default"); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	// Token must be materialized into the file...
+	data, err := os.ReadFile(credPath(paths, "default"))
+	if err != nil {
+		t.Fatalf("expected credential file: %v", err)
+	}
+	if string(data) != validBlob {
+		t.Fatalf("file = %q, want captured blob", data)
+	}
+	// ...and the keychain entry purged so the file is the single source of truth.
+	if len(kc.deleted) == 0 {
+		t.Fatal("expected keychain entry to be deleted after capture")
+	}
+	if _, ok := kc.entries[paths.EnvDir("default")]; ok {
+		t.Fatal("keychain entry still present after capture")
+	}
+}
+
+func TestLoginCapturesFileWhenNoKeychain(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := newTestManager(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate Linux: no keychain; `claude auth login` writes the file directly.
+	mgr.Keychain = newFakeKeychain(false)
+	mgr.Claude = &fakeClaude{loginFunc: func(dir string) error {
+		return os.WriteFile(filepath.Join(dir, ".credentials.json"), []byte(validBlob), 0o600)
+	}}
+
+	if err := mgr.Login("default"); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if _, err := os.Stat(credPath(paths, "default")); err != nil {
+		t.Fatalf("expected credential file: %v", err)
+	}
+}
+
+func TestLoginFailsWhenNoCredentialsProduced(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := newTestManager(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+	// claude "succeeds" but writes nothing; capture must error.
+	mgr.Keychain = newFakeKeychain(false)
+	mgr.Claude = &fakeClaude{}
+	if err := mgr.Login("default"); err == nil {
+		t.Fatal("expected error when login produces no credentials")
+	}
+}
+
+func TestAuthStatusNative(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := newTestManager(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Not authenticated until a token exists.
+	info, err := mgr.AuthStatus("default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Authenticated {
+		t.Fatal("expected not authenticated before import")
+	}
+
+	if err := mgr.Import("default", []byte(validBlob)); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	info, err = mgr.AuthStatus("default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Authenticated || info.SubscriptionType != "max" {
+		t.Fatalf("info = %+v, want authenticated max", info)
+	}
+	// testNowMs is 1_700_000_000_000; token expires at +300000ms => not expired.
+	if info.Expired {
+		t.Fatal("token should not be expired at testNowMs")
+	}
+	if info.ExpiresIn <= 0 {
+		t.Fatalf("ExpiresIn = %v, want positive", info.ExpiresIn)
+	}
+}
+
+func TestImportBareToken(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := newTestManager(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mgr.Import("default", []byte("sk-ant-oat01-bare\n")); err != nil {
+		t.Fatalf("Import bare token: %v", err)
+	}
+	info, err := mgr.AuthStatus("default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Authenticated {
+		t.Fatal("expected authenticated after bare-token import")
+	}
+}
+
+func TestImportRejectsGarbage(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := newTestManager(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Import("default", []byte("not a token and not json")); err == nil {
+		t.Fatal("expected error importing garbage")
+	}
+}
+
+func TestImportFromEnvAndExport(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := newTestManager(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Add("work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Import("default", []byte(validBlob)); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.ImportFromEnv("work", "default"); err != nil {
+		t.Fatalf("ImportFromEnv: %v", err)
+	}
+	out, err := mgr.Export("work")
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if string(out) != validBlob {
+		t.Fatalf("exported = %q, want %q", out, validBlob)
+	}
+}
+
+func TestRemovePurgesKeychain(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := newTestManager(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Add("work"); err != nil {
+		t.Fatal(err)
+	}
+	kc := newFakeKeychain(true)
+	mgr.Keychain = kc
+	if err := mgr.Remove("work"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	found := false
+	for _, d := range kc.deleted {
+		if d == paths.EnvDir("work") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Remove did not purge keychain for work env; deleted=%v", kc.deleted)
 	}
 }

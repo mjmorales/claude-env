@@ -24,6 +24,10 @@ var statusCmd = &cobra.Command{
 		fmt.Printf("Active: %s (%s)\n", name, source)
 		fmt.Printf("Config: %s\n", mgr.ConfigDir(name))
 
+		//nolint:errcheck // auth state is advisory in status output
+		info, _ := mgr.AuthStatus(name)
+		fmt.Printf("Auth:   %s\n", authTag(info))
+
 		e, ok := mgr.Cfg.Environments[name]
 		if !ok {
 			return nil

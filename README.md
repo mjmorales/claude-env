@@ -1,14 +1,14 @@
 # claude-env
 
-Manage multiple Claude Code OAuth sessions with easy switching and declarative shared state. Works like `rbenv` or `pyenv`, but for Claude Code accounts.
+Manage multiple Claude Code OAuth accounts with easy switching and declarative shared state. Works like `rbenv` or `pyenv`, but for Claude Code accounts.
 
-Each environment gets its own directory at `~/.claude-envs/<name>/` used as `CLAUDE_CONFIG_DIR`. Switching environments changes which directory Claude Code reads auth and state from. No credential juggling — just directory isolation.
+Each environment gets its own directory at `~/.claude-envs/<name>/` used as `CLAUDE_CONFIG_DIR`, and each carries its **own OAuth token** as a `.credentials.json` file inside that directory. Switching environments changes which directory — and which token — Claude Code authenticates from. The token is an explicit, portable file you can import, export, copy between environments, and back up — no opaque, per-machine credential juggling.
 
 ## Prerequisites
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and available as `claude` in `PATH`
 - Go 1.25+ (to build from source)
-- macOS (the `reset` command uses macOS Keychain; all other commands are platform-agnostic)
+- macOS, Linux, or Windows. Token storage is a plain `.credentials.json` file on every platform; on macOS, `login` additionally captures the token Claude Code writes to the Keychain into that file.
 
 ## Installation
 
@@ -52,9 +52,26 @@ claude-env login work
 claude-env use work
 ```
 
+## Upgrading from an earlier version
+
+This version makes each environment's token an explicit `.credentials.json` file (the "token-file model"). Earlier versions relied on Claude Code's per-directory macOS Keychain entries, which are opaque and break when a directory moves. The upgrade is a **clean break**: run each environment's login once so its token is captured into a file —
+
+```sh
+claude-env login default
+claude-env login work
+# ...or, without a browser, import a token directly:
+claude-env import work --setup-token
+```
+
+After that, `claude-env auth-status <name>` should report `Authenticated: yes`. Your environments, shared resources, and config are otherwise unchanged.
+
 ## How It Works
 
-Claude Code reads configuration and auth tokens from `CLAUDE_CONFIG_DIR` (defaults to `~/.claude/`). `claude-env` gives each account its own directory under `~/.claude-envs/` and manages which one is active. The shell integration shim sets `CLAUDE_CONFIG_DIR` transparently on every `claude` invocation.
+Claude Code reads configuration from `CLAUDE_CONFIG_DIR` (defaults to `~/.claude/`) and authenticates from an OAuth token. When a `.credentials.json` file is present in the config directory, Claude Code authenticates from it directly (on macOS this takes precedence over the Keychain; on Linux/Windows it is the native store).
+
+`claude-env` gives each account its own directory under `~/.claude-envs/` containing its own `.credentials.json` token, and manages which one is active. The shell integration shim sets `CLAUDE_CONFIG_DIR` transparently on every `claude` invocation, so switching accounts swaps both the config and the token atomically.
+
+> **macOS note.** Out of the box, `claude auth login` stores the token in the macOS Keychain under a service name derived from the config directory path (`Claude Code-credentials-<hash>`). That entry is opaque and breaks if the directory is moved. `claude-env login` runs the same flow, then **captures** the token into the environment's `.credentials.json` and removes the Keychain entry, so the portable file is the single source of truth.
 
 Resolution order for the active environment:
 
@@ -87,8 +104,8 @@ eval "$(claude-env completion bash)"
 
 | Command | Description |
 |---------|-------------|
-| `claude-env init` | Create `~/.claude-envs/`, adopt existing `~/.claude/.claude.json` as the `default` environment, copy `settings.json` and `CLAUDE.md` from `~/.claude/`, and set `default` as the global active environment. Run once after install. |
-| `claude-env reset` | Restore the active environment's credentials to macOS Keychain, then delete `~/.claude-envs/`. Removes all claude-env state. See [Uninstall](#uninstall). |
+| `claude-env init` | Create `~/.claude-envs/`, adopt the current Claude Code login (`~/.claude`'s token) as the `default` environment, copy `settings.json` and `CLAUDE.md` from `~/.claude/`, and set `default` as the global active environment. Run once after install. |
+| `claude-env reset` | Restore the active environment's token to the default location (`~/.claude/.credentials.json`), then delete `~/.claude-envs/`. Removes all claude-env state. See [Uninstall](#uninstall). |
 
 ### Managing Environments
 
@@ -110,10 +127,51 @@ eval "$(claude-env completion bash)"
 
 | Command | Description |
 |---------|-------------|
-| `claude-env login [name]` | Run `claude auth login` with `CLAUDE_CONFIG_DIR` pointed at the named environment. Defaults to the current active environment. Opens the browser OAuth flow and patches `.claude.json` with onboarding flags so interactive sessions start cleanly. |
-| `claude-env auth-status [name]` | Run `claude auth status` for the named environment (defaults to current). Shows whether the session is authenticated and its subscription type. |
+| `claude-env login [name]` | Run `claude auth login` with `CLAUDE_CONFIG_DIR` pointed at the named environment (defaults to current). Opens the browser OAuth flow, then **captures the resulting token into `<env>/.credentials.json`** and removes the macOS Keychain entry so the token is portable. Also patches `.claude.json` with onboarding flags. |
+| `claude-env import <name>` | Install a token without the browser flow — paste a `{"claudeAiOauth":{…}}` blob or a bare `sk-ant-*` token on stdin, copy from another environment with `--from-env <src>`, or capture a long-lived token with `--setup-token`. See [Importing & Exporting Tokens](#importing--exporting-tokens). |
+| `claude-env export <name>` | Print an environment's token. Redacted by default; `--raw` emits the verbatim `.credentials.json` for backup or moving an account to another machine. |
+| `claude-env auth-status [name]` | Report whether the named environment has a stored token, its subscription type, and token expiry — read **natively from `.credentials.json`, no network call**. |
 
-**Important:** Before running `claude-env login` for a new environment, make sure you are signed into the correct account at [claude.ai](https://claude.ai/new). The OAuth flow in the browser will attach to whichever account is currently active. If you need to switch accounts, sign out at claude.ai first, then sign in with the desired account before running `login`.
+**Important:** Before running `claude-env login` for a new environment, make sure you are signed into the correct account at [claude.ai](https://claude.ai/new). The OAuth flow in the browser attaches to whichever account is currently active. To avoid the browser entirely, use `claude-env import` instead.
+
+### Importing & Exporting Tokens
+
+Because each environment's identity is a plain `.credentials.json` token file, you can move tokens around without re-running the browser login.
+
+```sh
+# Paste a full token blob or a bare token (e.g. from `claude setup-token`)
+pbpaste | claude-env import work
+claude-env import work < token.json
+
+# Capture a long-lived token via Claude Code's own flow (inference-only scope)
+claude-env import work --setup-token
+
+# Clone an account into another environment
+claude-env import staging --from-env work
+
+# Back up a token, or move an account to another machine
+claude-env export work --raw > work-token.json
+#   on the other machine:
+claude-env add work && claude-env import work < work-token.json
+```
+
+A token blob has the shape Claude Code stores:
+
+```json
+{
+  "claudeAiOauth": {
+    "accessToken": "sk-ant-oat01-…",
+    "refreshToken": "sk-ant-ort01-…",
+    "expiresAt": 1748276587173,
+    "scopes": ["user:inference", "user:profile"],
+    "subscriptionType": "max"
+  }
+}
+```
+
+### Security
+
+Tokens are stored as `.credentials.json` files with `0600` (owner-only) permissions — the same model Claude Code uses natively on Linux and Windows, and comparable to `~/.aws/credentials`. They are **not** encrypted at rest. Treat an environment directory like any other secret material: do not commit it, sync it to a shared drive, or `export --raw` into a location others can read. `claude-env export` redacts tokens by default; `--raw` is required to emit the real values.
 
 ### Usage & Monitoring
 
@@ -290,10 +348,12 @@ settings_override = "/Users/alice/.claude-envs/pool/staging-settings.json"
     agents/
     commands/
   default/              # Environment config dirs (one per env)
-    .claude.json        # Auth + onboarding state
+    .credentials.json   # OAuth token (0600) — the account's identity
+    .claude.json        # Onboarding + account metadata state
     settings.json       # Copied from ~/.claude/ on init/add
     CLAUDE.md           # Copied from ~/.claude/ on init/add
   work/
+    .credentials.json
     .claude.json
     settings.json
     agents/             # Symlinked from pool when declared
@@ -347,4 +407,4 @@ exec $SHELL
 rm "$(which claude-env)"
 ```
 
-`reset` copies the active environment's `.claude.json` back to the macOS Keychain so Claude Code continues to work after removal. If you want to preserve credentials for a non-active environment, run `claude-env use <name>` before `reset`.
+`reset` copies the active environment's token to `~/.claude/.credentials.json` so Claude Code continues to work after removal. If you want to preserve credentials for a non-active environment, run `claude-env use <name>` before `reset`, or `claude-env export <name> --raw > backup.json` first.
