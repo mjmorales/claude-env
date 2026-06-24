@@ -3,16 +3,17 @@ package env
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/mjmorales/claude-env/internal/config"
+	"github.com/mjmorales/claude-env/internal/credentials"
 	"github.com/mjmorales/claude-env/internal/fsutil"
 )
 
@@ -23,11 +24,34 @@ type Manager struct {
 	Paths config.Paths
 	Cfg   config.Config
 	Fs    *fsutil.SymlinkFs
+
+	// Claude runs the claude CLI for login/setup-token flows.
+	Claude ClaudeRunner
+	// Keychain captures and purges the macOS per-config-dir credential entry.
+	Keychain KeychainStore
+	// Now returns the current time as Unix milliseconds; injectable for tests.
+	Now func() int64
 }
 
-// New creates an environment manager.
+// New creates an environment manager with production adapters and clock.
 func New(paths config.Paths, cfg config.Config, fs *fsutil.SymlinkFs) *Manager {
-	return &Manager{Paths: paths, Cfg: cfg, Fs: fs}
+	return &Manager{
+		Paths:    paths,
+		Cfg:      cfg,
+		Fs:       fs,
+		Claude:   ExecClaudeRunner{},
+		Keychain: keychainAdapter{},
+		Now:      func() int64 { return time.Now().UnixMilli() },
+	}
+}
+
+// requireEnv returns the config directory for a registered environment, or an
+// error if it is unknown.
+func (m *Manager) requireEnv(name string) (string, error) {
+	if _, exists := m.Cfg.Environments[name]; !exists {
+		return "", fmt.Errorf("environment %q not found", name)
+	}
+	return m.Paths.EnvDir(name), nil
 }
 
 // Init sets up ~/.claude-envs/ and creates a "default" environment.
@@ -49,16 +73,13 @@ func (m *Manager) Init() error {
 		return fmt.Errorf("create default env directory: %w", err)
 	}
 
-	// Copy existing ~/.claude/.claude.json into the new env dir if it exists.
-	existingCreds := filepath.Join(m.Paths.ClaudeDir, ".claude.json")
-	if data, err := m.Fs.ReadFile(existingCreds); err == nil && len(data) > 0 {
-		dst := filepath.Join(envDir, ".claude.json")
-		if err := m.Fs.WriteFile(dst, data, 0o600); err != nil {
-			return fmt.Errorf("copy existing credentials: %w", err)
-		}
-		fmt.Println("Adopted existing credentials as 'default' environment.")
+	// Best-effort: adopt the current default Claude Code login (~/.claude) as
+	// the 'default' environment's OAuth token. Clean break — we no longer copy
+	// .claude.json (which never held the token, only onboarding/account metadata).
+	if m.adoptDefaultCredentials(envDir) {
+		fmt.Println("Adopted existing Claude Code login as the 'default' environment.")
 	} else {
-		fmt.Println("Created 'default' environment. Run 'claude-env login' to authenticate.")
+		fmt.Println("Created 'default' environment. Run 'claude-env login default' to authenticate.")
 	}
 
 	m.copyBootstrapFiles(envDir)
@@ -115,61 +136,206 @@ func (m *Manager) Use(name string) error {
 	return nil
 }
 
-// Login runs 'claude auth login' with CLAUDE_CONFIG_DIR pointed at the
-// named environment's directory.
+// Login runs an interactive 'claude auth login' with CLAUDE_CONFIG_DIR pointed
+// at the named environment, then captures the resulting OAuth token into the
+// environment's .credentials.json so the token — not an opaque keychain entry —
+// is the environment's portable unit of identity.
 func (m *Manager) Login(name string) error {
-	if _, exists := m.Cfg.Environments[name]; !exists {
-		return fmt.Errorf("environment %q not found", name)
-	}
-
-	envDir := m.Paths.EnvDir(name)
-
-	claudeBin, err := exec.LookPath("claude")
+	envDir, err := m.requireEnv(name)
 	if err != nil {
-		return fmt.Errorf("claude CLI not found in PATH: %w", err)
+		return err
+	}
+	if err := m.Claude.Available(); err != nil {
+		//nolint:wrapcheck // ClaudeRunner.Available already returns a descriptive error
+		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "Logging in for environment %q...\n", name)
-
-	//nolint:gosec // claudeBin is validated by exec.LookPath
-	c := exec.CommandContext(context.Background(), claudeBin, "auth", "login")
-	c.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+envDir)
-	c.Stdin = os.Stdin
-	c.Stdout = os.Stdout
-	c.Stderr = os.Stderr
-
-	if err := c.Run(); err != nil {
+	if err := m.Claude.Login(envDir); err != nil {
 		return fmt.Errorf("claude auth login failed: %w", err)
 	}
 
-	// Ensure the global config has onboarding flags so interactive mode
-	// doesn't prompt for setup. Claude Code checks hasCompletedOnboarding
-	// and theme in .claude.json to decide whether to show onboarding.
+	if err := m.captureCredentials(envDir); err != nil {
+		return err
+	}
+
+	// Ensure the env's .claude.json has onboarding flags so interactive mode
+	// doesn't prompt for setup.
 	m.patchClaudeConfig(envDir)
 
-	fmt.Fprintf(os.Stderr, "Environment %q authenticated.\n", name)
+	fmt.Fprintf(os.Stderr, "Environment %q authenticated. Token stored in %s\n", name, credentials.Path(envDir))
 	return nil
 }
 
-// AuthStatus returns the auth status for the named environment.
-func (m *Manager) AuthStatus(name string) (string, error) {
-	if _, exists := m.Cfg.Environments[name]; !exists {
-		return "", fmt.Errorf("environment %q not found", name)
+// captureCredentials materializes an environment's OAuth token into its
+// .credentials.json file. On macOS, 'claude auth login' writes the token to the
+// per-config-dir Keychain entry, so it is read, decoded, written to the file,
+// and purged from the Keychain so the file is the single source of truth. On
+// platforms that authenticate from files natively, claude writes the file and
+// this only validates it.
+func (m *Manager) captureCredentials(envDir string) error {
+	if m.Keychain.Available() {
+		if data, err := m.Keychain.Read(envDir); err == nil {
+			if err := credentials.WriteRaw(m.Fs, envDir, data); err != nil {
+				return fmt.Errorf("materialize captured credentials: %w", err)
+			}
+			//nolint:errcheck // best-effort purge; the file is now source of truth
+			_ = m.Keychain.Delete(envDir)
+			return nil
+		}
 	}
 
-	claudeBin, err := exec.LookPath("claude")
+	if credentials.Exists(m.Fs, envDir) {
+		if _, err := credentials.Read(m.Fs, envDir); err != nil {
+			return fmt.Errorf("validate captured credentials: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("login did not produce credentials in %s", envDir)
+}
+
+// adoptDefaultCredentials best-effort copies the current default Claude Code
+// login (from ~/.claude — a .credentials.json file, or the macOS Keychain) into
+// a new environment's credential file. Returns whether a token was adopted.
+func (m *Manager) adoptDefaultCredentials(envDir string) bool {
+	source := m.Paths.ClaudeDir
+
+	if data, err := credentials.ReadRaw(m.Fs, source); err == nil {
+		if credentials.WriteRaw(m.Fs, envDir, data) == nil {
+			return true
+		}
+	}
+	if m.Keychain.Available() {
+		if data, err := m.Keychain.Read(source); err == nil {
+			if credentials.WriteRaw(m.Fs, envDir, data) == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// AuthInfo is the native authentication status for an environment, derived from
+// its .credentials.json without invoking the claude CLI.
+type AuthInfo struct {
+	Authenticated    bool
+	SubscriptionType string
+	ExpiresAt        int64
+	Expired          bool
+	ExpiresIn        time.Duration
+}
+
+// AuthStatus reports an environment's authentication state from its credential
+// file. A missing file means not authenticated; it is not an error.
+func (m *Manager) AuthStatus(name string) (AuthInfo, error) {
+	envDir, err := m.requireEnv(name)
 	if err != nil {
-		return "", fmt.Errorf("claude CLI not found in PATH: %w", err)
+		return AuthInfo{}, err
 	}
 
-	//nolint:gosec // claudeBin is validated by exec.LookPath
-	c := exec.CommandContext(context.Background(), claudeBin, "auth", "status")
-	c.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+m.Paths.EnvDir(name))
-	out, err := c.Output()
-	if err != nil {
-		return "", fmt.Errorf("run auth status: %w", err)
+	blob, err := credentials.Read(m.Fs, envDir)
+	if errors.Is(err, credentials.ErrNotAuthenticated) {
+		return AuthInfo{Authenticated: false}, nil
 	}
-	return string(out), nil
+	if err != nil {
+		return AuthInfo{}, fmt.Errorf("read credentials: %w", err)
+	}
+
+	o := blob.ClaudeAiOauth
+	now := m.Now()
+	return AuthInfo{
+		Authenticated:    true,
+		SubscriptionType: o.SubscriptionType,
+		ExpiresAt:        o.ExpiresAt,
+		Expired:          o.Expired(now),
+		ExpiresIn:        o.ExpiresIn(now),
+	}, nil
+}
+
+// Import installs an OAuth credential into an environment. The data may be a
+// full {"claudeAiOauth":{...}} blob or a bare sk-ant-* token, which is wrapped.
+func (m *Manager) Import(name string, data []byte) error {
+	envDir, err := m.requireEnv(name)
+	if err != nil {
+		return err
+	}
+
+	if _, vErr := credentials.ValidateRaw(data); vErr == nil {
+		return wrapWrite(credentials.WriteRaw(m.Fs, envDir, data))
+	}
+
+	token := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(token, "sk-ant-") {
+		return fmt.Errorf("input is neither a valid credential blob nor an sk-ant-* token")
+	}
+	return wrapWrite(credentials.Write(m.Fs, envDir, wrapToken(token)))
+}
+
+// ImportFromEnv copies the credential from src into dst.
+func (m *Manager) ImportFromEnv(dst, src string) error {
+	dstDir, err := m.requireEnv(dst)
+	if err != nil {
+		return err
+	}
+	srcDir, err := m.requireEnv(src)
+	if err != nil {
+		return err
+	}
+	data, err := credentials.ReadRaw(m.Fs, srcDir)
+	if err != nil {
+		return fmt.Errorf("read source %q credentials: %w", src, err)
+	}
+	return wrapWrite(credentials.WriteRaw(m.Fs, dstDir, data))
+}
+
+// ImportSetupToken runs 'claude setup-token' for an environment and stores the
+// resulting long-lived token. Such tokens are inference-only and carry no
+// refresh token, so they expire on their own ~1-year horizon.
+func (m *Manager) ImportSetupToken(name string) error {
+	envDir, err := m.requireEnv(name)
+	if err != nil {
+		return err
+	}
+	if err := m.Claude.Available(); err != nil {
+		//nolint:wrapcheck // ClaudeRunner.Available already returns a descriptive error
+		return err
+	}
+	token, err := m.Claude.SetupToken(envDir)
+	if err != nil {
+		return fmt.Errorf("claude setup-token failed: %w", err)
+	}
+	return wrapWrite(credentials.Write(m.Fs, envDir, wrapToken(token)))
+}
+
+// Export returns an environment's raw credential bytes for backup or transfer.
+func (m *Manager) Export(name string) ([]byte, error) {
+	envDir, err := m.requireEnv(name)
+	if err != nil {
+		return nil, err
+	}
+	data, err := credentials.ReadRaw(m.Fs, envDir)
+	if err != nil {
+		return nil, fmt.Errorf("read credentials: %w", err)
+	}
+	return data, nil
+}
+
+// wrapToken builds a credential blob from a bare OAuth token (e.g. from
+// `claude setup-token`), tagging it inference-only.
+func wrapToken(token string) credentials.Blob {
+	return credentials.Blob{ClaudeAiOauth: credentials.OAuth{
+		AccessToken: token,
+		Scopes:      []string{"user:inference"},
+	}}
+}
+
+// wrapWrite annotates a credentials write error so its origin survives the
+// package boundary.
+func wrapWrite(err error) error {
+	if err != nil {
+		return fmt.Errorf("write credentials: %w", err)
+	}
+	return nil
 }
 
 // Local pins an environment to the current directory.
@@ -247,6 +413,9 @@ func (m *Manager) Remove(name string) error {
 	envDir := m.Paths.EnvDir(name)
 	//nolint:errcheck
 	_ = m.Fs.RemoveAll(envDir)
+	// Purge any per-config-dir Keychain entry so a deleted env leaves no token.
+	//nolint:errcheck
+	_ = m.Keychain.Delete(envDir)
 
 	delete(m.Cfg.Environments, name)
 	if err := config.Save(m.Paths.ConfigFile, m.Cfg, m.Fs); err != nil {

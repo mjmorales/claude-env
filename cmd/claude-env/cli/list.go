@@ -28,13 +28,15 @@ var listCmd = &cobra.Command{
 		sort.Slice(envs, func(i, j int) bool { return envs[i].Name < envs[j].Name })
 
 		for _, e := range envs {
-			printEnv(e, source, mgr.Cfg.Global)
+			//nolint:errcheck // auth state is advisory in the listing
+			info, _ := mgr.AuthStatus(e.Name)
+			printEnv(e, source, mgr.Cfg.Global, info)
 		}
 		return nil
 	},
 }
 
-func printEnv(e env.EnvInfo, source, global string) {
+func printEnv(e env.EnvInfo, source, global string, auth env.AuthInfo) {
 	marker := "  "
 	if e.Active {
 		marker = "* "
@@ -48,6 +50,7 @@ func printEnv(e env.EnvInfo, source, global string) {
 	if e.Active && source != "global" {
 		tags = append(tags, "local")
 	}
+	tags = append(tags, authTag(auth))
 	if len(e.Shared) > 0 {
 		tags = append(tags, fmt.Sprintf("shared: %d", len(e.Shared)))
 	}
@@ -62,6 +65,20 @@ func printEnv(e env.EnvInfo, source, global string) {
 		fmt.Printf(")")
 	}
 	fmt.Println()
+}
+
+// authTag summarizes an environment's auth state for the listing.
+func authTag(auth env.AuthInfo) string {
+	if !auth.Authenticated {
+		return "no auth"
+	}
+	if auth.Expired {
+		return "auth: expired"
+	}
+	if auth.SubscriptionType != "" {
+		return "auth: " + auth.SubscriptionType
+	}
+	return "auth"
 }
 
 func init() {

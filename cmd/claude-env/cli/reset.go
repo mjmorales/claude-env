@@ -6,36 +6,37 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/mjmorales/claude-env/internal/keychain"
+	"github.com/mjmorales/claude-env/internal/credentials"
 )
 
 var resetCmd = &cobra.Command{
 	Use:   "reset",
 	Short: "Uninstall claude-env and restore default Claude Code flow",
-	Long: `Restores the active environment's credentials to the macOS Keychain,
-removes ~/.claude-envs/, and prints shell cleanup instructions.
+	Long: `Restores the active environment's OAuth token to the default Claude Code
+location (~/.claude/.credentials.json), removes ~/.claude-envs/, and prints
+shell cleanup instructions.
 
-After running this, Claude Code will use its default credential storage
-and CLAUDE_CONFIG_DIR is no longer needed.`,
+After running this, Claude Code authenticates from ~/.claude and
+CLAUDE_CONFIG_DIR is no longer needed.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		mgr, paths, err := loadManager()
 		if err != nil {
 			return err
 		}
 
-		// Resolve active env and restore its creds to keychain.
+		// Resolve active env and restore its token to the default location.
 		name, _, err := mgr.Current(mustCwd())
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "No active environment found, skipping keychain restore.\n")
+			fmt.Fprintf(os.Stderr, "No active environment found, skipping credential restore.\n")
 		} else {
 			envDir := mgr.ConfigDir(name)
-			data, readErr := mgr.Fs.ReadFile(envDir + "/.claude.json")
+			data, readErr := credentials.ReadRaw(mgr.Fs, envDir)
 			if readErr == nil && len(data) > 0 {
-				if writeErr := keychain.Write(data); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: could not restore keychain: %v\n", writeErr)
-					fmt.Fprintf(os.Stderr, "Your credentials are still in %s/.claude.json\n", envDir)
+				if writeErr := credentials.WriteRaw(mgr.Fs, paths.ClaudeDir, data); writeErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not restore default credentials: %v\n", writeErr)
+					fmt.Fprintf(os.Stderr, "Your token is still in %s\n", credentials.Path(envDir))
 				} else {
-					fmt.Fprintf(os.Stderr, "Restored %q credentials to macOS Keychain.\n", name)
+					fmt.Fprintf(os.Stderr, "Restored %q token to %s\n", name, credentials.Path(paths.ClaudeDir))
 				}
 			}
 		}

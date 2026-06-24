@@ -9,8 +9,8 @@ import (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize claude-env and adopt existing credentials",
-	Long:  `Creates ~/.claude-envs/, adopts any existing ~/.claude/.credentials.json as the "default" environment, and sets up the symlink.`,
+	Short: "Initialize claude-env and adopt the current Claude Code login",
+	Long:  `Creates ~/.claude-envs/ and a "default" environment, adopting the current Claude Code login (~/.claude's OAuth token) into default/.credentials.json when present. Sets "default" as the global active environment.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		mgr, _, err := loadManager()
 		if err != nil {
