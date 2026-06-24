@@ -94,6 +94,18 @@ linters:
     - gochecknoglobals # No globals (sometimes needed)
     - gochecknoinits   # No init functions (sometimes needed)
 
+  # Test files legitimately repeat string literals (fixtures, env names) and
+  # embed credential-shaped fake tokens. Production code stays fully linted.
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - goconst
+      - path: _test\.go
+        text: "G101"
+        linters:
+          - gosec
+
   # CRITICAL: Complexity settings for AI-friendly code
   settings:
     gocyclo:
