@@ -216,9 +216,11 @@ func (m *Manager) adoptDefaultCredentials(envDir string) bool {
 }
 
 // AuthInfo is the native authentication status for an environment, derived from
-// its .credentials.json without invoking the claude CLI.
+// its .credentials.json (and .claude.json for the account email) without
+// invoking the claude CLI.
 type AuthInfo struct {
 	Authenticated    bool
+	Email            string
 	SubscriptionType string
 	ExpiresAt        int64
 	Expired          bool
@@ -245,11 +247,31 @@ func (m *Manager) AuthStatus(name string) (AuthInfo, error) {
 	now := m.Now()
 	return AuthInfo{
 		Authenticated:    true,
+		Email:            m.accountEmail(envDir),
 		SubscriptionType: o.SubscriptionType,
 		ExpiresAt:        o.ExpiresAt,
 		Expired:          o.Expired(now),
 		ExpiresIn:        o.ExpiresIn(now),
 	}, nil
+}
+
+// accountEmail returns the account email from an environment's .claude.json
+// oauthAccount block. Best-effort: the token blob carries no email, and the
+// field is absent until Claude Code has fetched the account profile.
+func (m *Manager) accountEmail(envDir string) string {
+	data, err := m.Fs.ReadFile(filepath.Join(envDir, ".claude.json"))
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		OauthAccount struct {
+			EmailAddress string `json:"emailAddress"`
+		} `json:"oauthAccount"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+	return cfg.OauthAccount.EmailAddress
 }
 
 // Import installs an OAuth credential into an environment. The data may be a

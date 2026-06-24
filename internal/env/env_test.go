@@ -637,6 +637,46 @@ func TestAuthStatusNative(t *testing.T) {
 	}
 }
 
+func TestAuthStatusIncludesEmail(t *testing.T) {
+	paths, fs := setupTestDirs(t)
+	cfg := config.Config{Environments: make(map[string]config.Environment)}
+	mgr := newTestManager(paths, cfg, fs)
+	if err := mgr.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Import("default", []byte(validBlob)); err != nil {
+		t.Fatal(err)
+	}
+	// The email lives in .claude.json's oauthAccount, not the token blob.
+	claudeJSON := []byte(`{"oauthAccount":{"emailAddress":"user@example.com"}}`)
+	if err := os.WriteFile(filepath.Join(paths.EnvDir("default"), ".claude.json"), claudeJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := mgr.AuthStatus("default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Email != "user@example.com" {
+		t.Fatalf("Email = %q, want user@example.com", info.Email)
+	}
+
+	// No .claude.json (or no oauthAccount) => empty email, not an error.
+	if err := mgr.Add("work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Import("work", []byte(validBlob)); err != nil {
+		t.Fatal(err)
+	}
+	info, err = mgr.AuthStatus("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Email != "" {
+		t.Fatalf("Email = %q, want empty when no oauthAccount present", info.Email)
+	}
+}
+
 func TestImportBareToken(t *testing.T) {
 	paths, fs := setupTestDirs(t)
 	cfg := config.Config{Environments: make(map[string]config.Environment)}

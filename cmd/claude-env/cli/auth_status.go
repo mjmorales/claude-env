@@ -47,6 +47,9 @@ func formatAuthStatus(name string, info env.AuthInfo) string {
 	}
 
 	s := fmt.Sprintf("Environment: %s\nAuthenticated: yes\n", name)
+	if info.Email != "" {
+		s += fmt.Sprintf("Account: %s\n", info.Email)
+	}
 	if info.SubscriptionType != "" {
 		s += fmt.Sprintf("Subscription: %s\n", info.SubscriptionType)
 	}
